@@ -150,6 +150,7 @@ def _ollama_detector(config):
     return OllamaPiiDetector(
         model=config.deidentification.ollama_model,
         base_url=config.deidentification.ollama_url,
+        timeout_s=config.deidentification.timeout_s,
     )
 
 

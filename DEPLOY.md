@@ -202,10 +202,12 @@ use:
 ```yaml
 deidentification:
   ollama_url: "http://host.docker.internal:11434"
-  ollama_model: null
+  ollama_model: "gemma3:4b"
+  timeout_s: 300.0
 ```
 
-`ollama_model` intentionally stays null until the operator chooses it.
+The generic server example keeps `ollama_model` unset; the Mac example uses
+`gemma3:4b` for the local PII detector.
 
 Docker Desktop has no app-server `DOCKER-USER` firewall equivalent. Mac-side
 controls are the code egress guard, tokens-only memory, and provider config

@@ -18,7 +18,7 @@ from konsilium import (
 )
 from konsilium.config import Config
 from konsilium.deid import PiiEntity
-from konsilium.ingest import extract_text_with_stats
+from konsilium.ingest import _ollama_detector, extract_text_with_stats
 from konsilium.ollama_deid import OllamaPiiDetector
 
 
@@ -352,31 +352,49 @@ class Stage1Test(unittest.TestCase):
 
     def test_ollama_detector_parses_local_model_entities(self) -> None:
         calls = []
+        shapes = [
+            json.dumps({"entities": [{"kind": "PERSON", "value": "Frau Mueller"}]}),
+            "```json\n{\"entities\":[{\"kind\":\"ADDRESS\",\"value\":\"Hauptstrasse 7\"}]}\n```",
+            json.dumps([{"kind": "EMAIL", "value": "frau@example.test"}]),
+            json.dumps({"kind": "PHONE", "value": "+491234"}),
+        ]
 
-        def fake_fetch(url: str, payload: dict) -> str:
-            calls.append((url, payload))
-            return json.dumps(
-                {
-                    "response": json.dumps(
-                        [
-                            {"kind": "PERSON", "value": "Frau Mueller"},
-                            {"kind": "ADDRESS", "value": "Hauptstrasse 7"},
-                        ]
-                    )
-                }
-            )
+        def fake_fetch(url: str, payload: dict, timeout_s: float) -> str:
+            calls.append((url, payload, timeout_s))
+            return json.dumps({"response": shapes.pop(0)})
 
         detector = OllamaPiiDetector(
             model="local-med-ner",
             base_url="http://127.0.0.1:11434",
+            timeout_s=321,
             fetch=fake_fetch,
         )
 
-        entities = detector("Frau Mueller lebt in Hauptstrasse 7.")
+        entities = []
+        for _ in range(4):
+            entities.extend(detector("Frau Mueller lebt in Hauptstrasse 7."))
 
-        self.assertEqual(entities, [PiiEntity("PERSON", "Frau Mueller"), PiiEntity("ADDRESS", "Hauptstrasse 7")])
+        self.assertEqual(
+            entities,
+            [
+                PiiEntity("PERSON", "Frau Mueller"),
+                PiiEntity("ADDRESS", "Hauptstrasse 7"),
+                PiiEntity("EMAIL", "frau@example.test"),
+                PiiEntity("PHONE", "+491234"),
+            ],
+        )
         self.assertEqual(calls[0][0], "http://127.0.0.1:11434/api/generate")
         self.assertEqual(calls[0][1]["model"], "local-med-ner")
+        self.assertEqual(calls[0][1]["format"]["required"], ["entities"])
+        self.assertEqual(calls[0][1]["format"]["properties"]["entities"]["items"]["required"], ["kind", "value"])
+        self.assertIs(calls[0][1]["think"], False)
+        self.assertEqual(calls[0][1]["options"], {"temperature": 0})
+        self.assertEqual({call[2] for call in calls}, {321})
+
+        configured = _ollama_detector(
+            Config.model_validate({"deidentification": {"ollama_model": "gemma3:4b", "timeout_s": 123}})
+        )
+        self.assertEqual(configured.timeout_s, 123)
 
     def test_stage1_smoke_reports_pii_boundary(self) -> None:
         with TemporaryDirectory() as tmp:
