@@ -34,8 +34,17 @@
 - Extraction fails loudly if any page remains empty after OCR; stats are PII-free and returned to operator surfaces.
 - Photo/image ingest can reuse the same Tesseract path later; PDF is the only default OCR input for this stage.
 
+## 2026-07-10 - De-ID Residue Gate
+
+- Every ingest scans de-identified text for DOB, German street/PLZ, phone, long digit, KVNR and case-number residue before any patient-memory or vault write.
+- Each named residue pattern has a configurable `block`, `report` or `ignore` action; defaults block ingest and errors reveal only line numbers and pattern names.
+- `deid-preview` writes local preview, local vault and PII-free residue report under `previews/`; it does not structure, index or ingest the document.
+- The local Ollama detector uses overlapping text chunks and deduplicates entities across chunks; defaults are 900 characters with 150 character overlap.
+
 ## 2026-07-09 - Public Snapshot Hygiene
 
 - Public releases are sanitized working-tree snapshots, not private history pushes.
 - The public leak gate is case-insensitive and blocks internal ecosystem identifiers.
 - The first public snapshot was force-republished as a clean root commit after the gate was tightened.
+- `scripts/publish.sh` uses `Sanitized snapshot: <private commit subject>` by default;
+  `KONSILIUM_PUBLIC_MESSAGE` can name a release explicitly.

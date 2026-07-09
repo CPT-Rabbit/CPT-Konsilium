@@ -10,7 +10,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Callable
 
-from .deid import PiiDetector, deidentify
+from .deid import PiiDetector, assert_no_blocking_residue, deidentify, residue_report
 from .util import json_block
 
 _LOG = logging.getLogger(__name__)
@@ -38,6 +38,7 @@ def ingest_document(
     pii_detector: PiiDetector | None = None,
     structure_model=None,
     allow_synthetic: bool = False,
+    residue_policy: dict[str, str] | None = None,
 ) -> Path:
     path = Path(path)
     text = extract_text_with_stats(path, extractor=extractor).text
@@ -48,6 +49,7 @@ def ingest_document(
         pii_detector=pii_detector,
         structure_model=structure_model,
         allow_synthetic=allow_synthetic,
+        residue_policy=residue_policy,
     )
 
 
@@ -59,6 +61,7 @@ def ingest_text(
     pii_detector: PiiDetector | None = None,
     structure_model=None,
     allow_synthetic: bool = False,
+    residue_policy: dict[str, str] | None = None,
 ) -> Path:
     if pii_detector is None and not allow_synthetic:
         raise RuntimeError("ingest requires a configured PII detector; pass allow_synthetic=True only for tests")
@@ -68,12 +71,13 @@ def ingest_text(
     safe_patient_id = _safe_id(patient_id)
     patient_dir = root / "patients" / safe_patient_id
     vault_dir = root / "identity_vault"
-    patient_dir.mkdir(parents=True, exist_ok=True)
-    vault_dir.mkdir(parents=True, exist_ok=True)
 
     vault_path = vault_dir / f"{safe_patient_id}.json"
     existing_vault = _read_vault(vault_path)
     document = deidentify(text, existing_vault=existing_vault, pii_detector=pii_detector)
+    assert_no_blocking_residue(document.text, residue_policy)
+    patient_dir.mkdir(parents=True, exist_ok=True)
+    vault_dir.mkdir(parents=True, exist_ok=True)
     documents_path = patient_dir / "documents.md"
     _append_document(documents_path, document.text)
     _write_structured_files(
@@ -109,6 +113,7 @@ def ingest_patient_document(
         root or config.runtime.patient_root,
         pii_detector=detector,
         structure_model=model,
+        residue_policy=config.deidentification.residue,
     )
 
 
@@ -130,6 +135,7 @@ def ingest_patient_file(
         root or config.runtime.patient_root,
         pii_detector=detector,
         structure_model=model,
+        residue_policy=config.deidentification.residue,
     )
     return patient_dir, extracted.stats
 
@@ -152,7 +158,46 @@ def _ollama_detector(config):
         model=config.deidentification.ollama_model,
         base_url=config.deidentification.ollama_url,
         timeout_s=config.deidentification.timeout_s,
+        chunk_size=config.deidentification.chunk_size,
+        chunk_overlap=config.deidentification.chunk_overlap,
     )
+
+
+def deid_preview(
+    config,
+    path: str | Path,
+    root: str | Path | None = None,
+    *,
+    extractor: Extractor | None = None,
+    pii_detector: PiiDetector | None = None,
+) -> dict:
+    """Extract and de-identify locally without patient-memory or model-provider writes."""
+    extracted = extract_text_with_stats(path, extractor=extractor)
+    detector = pii_detector or (_ollama_detector(config) if config.deidentification.ollama_model else None)
+    if detector is not None:
+        _check_detector(detector)
+    document = deidentify(extracted.text, pii_detector=detector)
+    hits = residue_report(document.text, config.deidentification.residue)
+    preview_dir = Path(root or config.runtime.patient_root) / "previews"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    name = _safe_id(Path(path).stem) if Path(path).stem.strip() else "document"
+    preview_path = preview_dir / f"preview-{name}.md"
+    vault_path = preview_dir / f"preview-{name}.vault.json"
+    report_path = preview_dir / f"preview-{name}.residue.json"
+    preview_path.write_text(document.text.strip() + "\n", encoding="utf-8")
+    vault_path.write_text(json.dumps(document.vault, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    report = {
+        "hits": [hit.__dict__ for hit in hits],
+        "blocked": any(hit.action == "block" for hit in hits),
+    }
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return {
+        "preview_path": str(preview_path),
+        "vault_path": str(vault_path),
+        "residue_report_path": str(report_path),
+        "residue": report,
+        "extraction": extracted.stats,
+    }
 
 
 def _check_detector(detector: PiiDetector) -> None:

@@ -9,12 +9,15 @@ from unittest.mock import patch
 
 from konsilium import (
     EgressViolation,
+    ResidueError,
     assert_safe_knowledge_query,
     deidentify,
+    deid_preview,
     ingest_document,
     ingest_patient_file,
     ingest_patient_document,
     ingest_text,
+    residue_report,
     stage1_smoke,
 )
 from konsilium.config import Config
@@ -73,6 +76,70 @@ class Stage1Test(unittest.TestCase):
         self.assertIn("HbA1c 8.1", document.text)
         self.assertIn("LDL 140", document.text)
         self.assertEqual(document.vault["[INSURANCE_1]"], "A987654321")
+
+    def test_regex_deid_handles_realistic_german_letterhead_patterns(self) -> None:
+        document = deidentify(
+            "\n".join(
+                [
+                    "Klinik Musterstadt",
+                    "Musterstraße 12",
+                    "Muster strasse 13",
+                    "10115 Berlin",
+                    "Fallnummer 12345678",
+                    "geb . 04 . 05 . 1962",
+                    "Tel.: +49 (0)30 / 123-4567",
+                    "Fax: 030-7654321",
+                ]
+            )
+        )
+
+        for value in ("Musterstraße 12", "Muster strasse 13", "10115 Berlin", "12345678", "04 . 05 . 1962", "123-4567", "7654321"):
+            self.assertNotIn(value, document.text)
+        self.assertIn("[CASE_NUMBER_1]", document.text)
+        self.assertRegex(document.text, r"age \d+")
+        self.assertFalse(
+            {hit.pattern for hit in residue_report(document.text)}
+            & {"DOB", "STREET", "PLZ_CITY", "CASE_NUMBER", "PHONE"}
+        )
+
+    def test_residue_gate_blocks_without_writing_patient_memory(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaisesRegex(ResidueError, r"DIGIT_RUN lines 1") as raised:
+                ingest_text("case-1", "OCR noise 123456", root, allow_synthetic=True)
+
+            self.assertNotIn("123456", str(raised.exception))
+            self.assertFalse((root / "patients").exists())
+            self.assertFalse((root / "identity_vault").exists())
+
+        reported = residue_report("OCR noise 123456", {"DIGIT_RUN": "report"})
+        self.assertEqual(len(reported), 1)
+        self.assertEqual(reported[0].action, "report")
+
+    def test_deid_preview_writes_only_local_preview_artifacts(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "letterhead.txt"
+            source.write_text(
+                "Patient: Anna Mueller\nMusterstrasse 7\n80331 Muenchen\ngeb. 04.05.1962\nFall-Nr 12345678",
+                encoding="utf-8",
+            )
+
+            result = deid_preview(
+                Config.model_validate({"runtime": {"patient_root": root}}),
+                source,
+                pii_detector=lambda text: [],
+            )
+
+            preview = Path(result["preview_path"]).read_text(encoding="utf-8")
+            vault = Path(result["vault_path"]).read_text(encoding="utf-8")
+            self.assertNotIn("Anna Mueller", preview)
+            self.assertNotIn("Musterstrasse 7", preview)
+            self.assertIn("Anna Mueller", vault)
+            self.assertFalse(result["residue"]["blocked"])
+            self.assertNotIn("Anna Mueller", json.dumps(result, ensure_ascii=False))
+            self.assertFalse((root / "patients").exists())
+            self.assertFalse((root / "identity_vault").exists())
 
     def test_egress_guard_rejects_tokens_and_raw_pii(self) -> None:
         assert_safe_knowledge_query("metformin hba1c older adults guideline")
@@ -227,7 +294,7 @@ class Stage1Test(unittest.TestCase):
         self.assertIn("[PATIENT_1]", document.text)
         self.assertIn("[ADDR_1]", document.text)
         self.assertIn("[PATIENT_2]", document.text)
-        self.assertIn("[ADDR_2]", document.text)
+        self.assertRegex(document.text, r"\[ADDR_\d+\]")
         self.assertNotIn("Frau Mueller", document.text)
         self.assertNotIn("Hauptstrasse 7", document.text)
         self.assertNotIn("John Smith", document.text)
@@ -427,9 +494,32 @@ class Stage1Test(unittest.TestCase):
         self.assertEqual({call[2] for call in calls}, {321})
 
         configured = _ollama_detector(
-            Config.model_validate({"deidentification": {"ollama_model": "gemma3:4b", "timeout_s": 123}})
+            Config.model_validate(
+                {"deidentification": {"ollama_model": "gemma3:4b", "timeout_s": 123, "chunk_size": 777, "chunk_overlap": 111}}
+            )
         )
         self.assertEqual(configured.timeout_s, 123)
+        self.assertEqual(configured.chunk_size, 777)
+        self.assertEqual(configured.chunk_overlap, 111)
+
+    def test_ollama_detector_unions_overlapping_chunks(self) -> None:
+        calls = []
+
+        def fake_fetch(url: str, payload: dict, timeout_s: float) -> str:
+            chunk = payload["prompt"].split("TEXT:\n", 1)[1]
+            calls.append(chunk)
+            entities = []
+            if "Alice" in chunk:
+                entities.append({"kind": "PERSON", "value": "Alice"})
+            if "Bob" in chunk:
+                entities.append({"kind": "PERSON", "value": "Bob"})
+            return json.dumps({"response": json.dumps({"entities": entities})})
+
+        detector = OllamaPiiDetector(model="local-med-ner", chunk_size=12, chunk_overlap=4, fetch=fake_fetch)
+        entities = detector("Alice 123456 Bob 123456 Alice")
+
+        self.assertGreater(len(calls), 1)
+        self.assertEqual(entities, [PiiEntity("PERSON", "Alice"), PiiEntity("PERSON", "Bob")])
 
     def test_stage1_smoke_reports_pii_boundary(self) -> None:
         with TemporaryDirectory() as tmp:

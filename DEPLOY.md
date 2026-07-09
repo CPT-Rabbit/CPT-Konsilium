@@ -66,6 +66,20 @@ PDF ingest handles text-layer and scanned pages locally. The image includes
 `ocrmypdf` plus Tesseract `deu` and `eng`; no cloud OCR is used. If OCR is
 needed but unavailable, ingest fails before writing an empty document.
 
+Run a preview before admitting a new real document source:
+
+```sh
+docker compose -f docker-compose.mac.yml run --rm konsilium \
+  --config /config/config.yaml deid-preview --file /memory/inbox/befund.pdf
+find "$KONSILIUM_HOME/memory/previews" -maxdepth 1 -type f -print
+```
+
+This writes a tokenized preview, a local preview vault and a PII-free residue
+report under `memory/previews/`. It never creates patient memory, runs
+structuring or calls a reasoning provider. Residue hits are reported only as
+pattern names and line numbers; real ingest remains blocked until they are
+resolved.
+
 Synthetic operator flow:
 
 ```sh
@@ -94,6 +108,8 @@ docker compose -f docker-compose.mac.yml run --rm konsilium \
 
 Claude Desktop / Claude Code use the MCP server, not a custom UI. The MCP tool
 surface intentionally omits `letter-render`; it cannot read `identity_vault/`.
+Use `deid_preview` before `ingest_document` for a new real document source;
+the tool returns paths and a PII-free residue report, never vault content.
 
 Create a host wrapper:
 
@@ -148,7 +164,7 @@ Claude Code `.mcp.json`:
 }
 ```
 
-Expected chat flow: call `ingest_document` with `synthetic=true`, run
+Expected chat flow: call `deid_preview`, call `ingest_document` with `synthetic=true`, run
 `case_review` with two roles, inspect context through `memory_search` /
 `memory_get`, then call `doctor_letter` for a tokenized draft. Rendered PII
 stays CLI-only on the host.

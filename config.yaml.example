@@ -20,6 +20,16 @@ deidentification:
   ollama_url: "http://127.0.0.1:11434"
   ollama_model: null   # The operator chooses before real patient documents are allowed.
   timeout_s: 300.0
+  chunk_size: 900
+  chunk_overlap: 150
+  residue:
+    DOB: block
+    STREET: block
+    PLZ_CITY: block
+    PHONE: block
+    DIGIT_RUN: block
+    KVNR: block
+    CASE_NUMBER: block
 
 auth:
   file_env: KONSILIUM_AUTH_FILE

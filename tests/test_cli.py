@@ -41,6 +41,7 @@ class CliTest(unittest.TestCase):
             )
 
             ingest_out = _run("--config", config, "ingest", "--patient", "case-1", "--file", source, "--synthetic")
+            preview_out = _run("--config", config, "deid-preview", "--file", source)
             with patch("konsilium.__main__._model_client", return_value=BadModel()):
                 review_out = _run("--config", config, "review", "--patient", "case-1", "--roles", "internist")
             letter_out = _run("--config", config, "letter", "--patient", "case-1", "--language", "de")
@@ -57,6 +58,8 @@ class CliTest(unittest.TestCase):
             )
 
             self.assertEqual(json.loads(ingest_out)["extraction"]["kind"], "text")
+            self.assertNotIn("Anna Mueller", preview_out)
+            self.assertTrue(Path(json.loads(preview_out)["preview_path"]).exists())
             self.assertIn("report=", review_out)
             self.assertIn("Chair synthesis", review_out)
             self.assertIn("Anna Mueller", rendered)

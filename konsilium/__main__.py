@@ -23,6 +23,9 @@ def main(argv: list[str] | None = None) -> None:
     ingest.add_argument("--file", required=True)
     ingest.add_argument("--synthetic", action="store_true", help="explicit synthetic/test ingest")
 
+    preview = subparsers.add_parser("deid-preview", help="write a local de-identification preview without ingesting")
+    preview.add_argument("--file", required=True)
+
     review = subparsers.add_parser("review", help="run a consilium review")
     review.add_argument("--patient", required=True)
     review.add_argument("--roles", help="comma-separated roles")
@@ -66,6 +69,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "ingest":
         _ingest(config, args)
+        return
+    if args.command == "deid-preview":
+        _deid_preview(config, args)
         return
     if args.command == "review":
         _review(config, args)
@@ -146,6 +152,12 @@ def _ingest(config: Config, args: argparse.Namespace) -> None:
             config.runtime.patient_root,
         )
     print(json.dumps({"patient_dir": str(patient_dir), "extraction": stats}, ensure_ascii=False))
+
+
+def _deid_preview(config: Config, args: argparse.Namespace) -> None:
+    from .ingest import deid_preview
+
+    print(json.dumps(deid_preview(config, args.file), ensure_ascii=False))
 
 
 def _review(config: Config, args: argparse.Namespace) -> None:

@@ -6,6 +6,7 @@ from .config import Config
 
 MCP_TOOL_NAMES = {
     "ingest_document",
+    "deid_preview",
     "case_review",
     "doctor_letter",
     "memory_search",
@@ -35,6 +36,11 @@ class KonsiliumOps:
                 self.root,
             )
         return {"patient_id": patient_id, "patient_dir": str(patient_dir), "extraction": stats}
+
+    def deid_preview(self, path: str) -> dict:
+        from .ingest import deid_preview
+
+        return deid_preview(self.config, path, self.root)
 
     def case_review(
         self,
@@ -92,6 +98,7 @@ def run_stdio(config: Config) -> None:
     server = FastMCP("konsilium")
 
     server.tool()(ops.ingest_document)
+    server.tool()(ops.deid_preview)
     server.tool()(ops.case_review)
     server.tool()(ops.doctor_letter)
     server.tool()(ops.memory_search)

@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from .deid import DEFAULT_RESIDUE_POLICY
+
 ProviderKind = Literal["custom", "xai-oauth", "codex", "claude-cli"]
 
 
@@ -35,6 +37,9 @@ class DeidentificationConfig:
     ollama_url: str = "http://127.0.0.1:11434"
     ollama_model: str | None = None
     timeout_s: float = 300.0
+    chunk_size: int = 900
+    chunk_overlap: int = 150
+    residue: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_RESIDUE_POLICY))
 
 
 @dataclass(frozen=True)

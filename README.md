@@ -133,6 +133,7 @@ konsilium() { docker run --rm -i \
   konsilium --config /config/config.yaml "$@"; }
 
 konsilium ingest --patient case-1 --file /memory/inbox/befund.pdf
+konsilium deid-preview --file /memory/inbox/befund.pdf
 konsilium review --patient case-1 --roles internist,endocrinologist \
   --question "What should the next appointment clarify?"
 konsilium letter --patient case-1 --language de
@@ -145,7 +146,7 @@ konsilium monitor --patients case-1,case-2
 ### MCP (chat as the interface)
 
 Register the server in Claude Desktop (`claude_desktop_config.json`) or any
-MCP client — snippet in `DEPLOY.md`. Exposed tools: `ingest_document`,
+MCP client — snippet in `DEPLOY.md`. Exposed tools: `ingest_document`, `deid_preview`,
 `case_review`, `doctor_letter`, `memory_search`, `memory_get`,
 `monitor_review`, `list_patients`.
 

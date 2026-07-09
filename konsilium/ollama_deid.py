@@ -35,6 +35,8 @@ class OllamaPiiDetector:
         model: str,
         base_url: str = "http://127.0.0.1:11434",
         timeout_s: float = 300.0,
+        chunk_size: int = 900,
+        chunk_overlap: int = 150,
         fetch: Fetch | None = None,
     ):
         if not model:
@@ -42,9 +44,24 @@ class OllamaPiiDetector:
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.timeout_s = timeout_s
+        if chunk_size <= 0 or not 0 <= chunk_overlap < chunk_size:
+            raise ValueError("Ollama PII detector requires 0 <= chunk_overlap < chunk_size")
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
         self.fetch = fetch or _fetch
 
     def __call__(self, text: str) -> list[PiiEntity]:
+        entities = []
+        seen = set()
+        for chunk in _chunks(text, self.chunk_size, self.chunk_overlap):
+            for entity in self._detect_chunk(chunk):
+                key = (entity.kind.strip().upper(), entity.value.strip())
+                if key not in seen:
+                    seen.add(key)
+                    entities.append(entity)
+        return entities
+
+    def _detect_chunk(self, text: str) -> list[PiiEntity]:
         payload = {
             "model": self.model,
             "stream": False,
@@ -75,6 +92,14 @@ def _fetch(url: str, payload: dict, timeout_s: float) -> str:
     )
     with urlopen(request, timeout=timeout_s) as response:
         return response.read().decode("utf-8")
+
+
+def _chunks(text: str, size: int, overlap: int):
+    step = size - overlap
+    for start in range(0, len(text), step):
+        yield text[start:start + size]
+        if start + size >= len(text):
+            break
 
 
 def _entities(response) -> list[dict]:
