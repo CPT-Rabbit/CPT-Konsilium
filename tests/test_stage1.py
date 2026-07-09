@@ -55,6 +55,24 @@ class Stage1Test(unittest.TestCase):
             self.assertEqual(vault["[PATIENT_1]"], "Anna Mueller")
             self.assertEqual(vault["[DOB_1]"], "12.03.1974")
 
+    def test_regex_deid_catches_german_insurance_numbers_without_model(self) -> None:
+        document = deidentify(
+            "\n".join(
+                [
+                    "Versichertennummer A987654321",
+                    "Die Karte A987654321 wurde vorgelegt.",
+                    "HbA1c 8.1, LDL 140, CRP 5",
+                ]
+            )
+        )
+
+        self.assertIn("[INSURANCE_1]", document.text)
+        self.assertEqual(document.text.count("[INSURANCE_1]"), 2)
+        self.assertNotIn("A987654321", document.text)
+        self.assertIn("HbA1c 8.1", document.text)
+        self.assertIn("LDL 140", document.text)
+        self.assertEqual(document.vault["[INSURANCE_1]"], "A987654321")
+
     def test_egress_guard_rejects_tokens_and_raw_pii(self) -> None:
         assert_safe_knowledge_query("metformin hba1c older adults guideline")
 

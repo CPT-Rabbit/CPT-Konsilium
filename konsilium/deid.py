@@ -25,7 +25,14 @@ _FIELD_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("PATIENT", re.compile(r"\b(?:Patient|Name|Patientin|Patient name):\s*([^\n,;]+)", re.I)),
     ("DOB", re.compile(r"\b(?:DOB|Date of birth|Geboren|Geburtsdatum):\s*([0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{2,4})", re.I)),
     ("ADDR", re.compile(r"\b(?:Address|Adresse):\s*([^\n]+)", re.I)),
-    ("INSURANCE", re.compile(r"\b(?:Insurance|Versicherung|KVNR):\s*([A-Z0-9 -]{6,})", re.I)),
+    (
+        "INSURANCE",
+        re.compile(
+            r"\b(?:Insurance|Versicherung|Versichertennummer|Versichertennr|Versicherten-Nr|KVNR):?\s*([A-Z0-9 -]{6,})",
+            re.I,
+        ),
+    ),
+    ("INSURANCE", re.compile(r"\b([A-Z][0-9]{9})\b")),
     ("EMAIL", re.compile(r"\b([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\b", re.I)),
     (
         "PHONE",
