@@ -197,6 +197,52 @@ class Stage1Test(unittest.TestCase):
             & {"DOB", "PERSON_HEADER", "STREET", "CASE_NUMBER"}
         )
 
+    def test_dob_marker_gate_catches_garbled_formats_and_accepts_split_years(self) -> None:
+        document = deidentify("geb. am 19.07.201 5\ngeb. am 19.07,201 5")
+
+        self.assertEqual(document.text.count("age "), 2)
+        self.assertNotIn("DOB_MARKER", {hit.pattern for hit in residue_report(document.text)})
+
+        garbled = deidentify("Frau Dr. B.Püst Geburtsdatum Sonntag, 19. JuËI 2015")
+        self.assertNotIn("Dr. B.Püst", garbled.text)
+        self.assertIn("DOB_MARKER", {hit.pattern for hit in residue_report(garbled.text)})
+
+        with TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ResidueError, r"DOB_MARKER lines 1"):
+                ingest_text("case-1", "Geburtsdatum Sonntag, 19. JuËI 2015", Path(tmp), allow_synthetic=True)
+
+    def test_compact_physician_names_are_tokenized(self) -> None:
+        document = deidentify("Dr. B.Püst\nDr. B.Kohl\nFrau Dr. Preuße")
+
+        for value in ("Dr. B.Püst", "Dr. B.Kohl", "Frau Dr. Preuße"):
+            self.assertNotIn(value, document.text)
+        self.assertEqual(document.text.count("[PATIENT_"), 3)
+
+    def test_ocr_email_gate_and_institutional_email_decision(self) -> None:
+        private = deidentify("kontakt patient@example . de")
+        self.assertNotIn("patient@example . de", private.text)
+
+        institutional = deidentify("Klinik Musterstadt\ninfo@klinikum . de")
+        self.assertIn("info@klinikum . de", institutional.text)
+        self.assertEqual(institutional.retained_institutional_emails, ("info@klinikum . de",))
+        self.assertIn("EMAIL", {hit.pattern for hit in residue_report(institutional.text)})
+        self.assertNotIn(
+            "EMAIL",
+            {
+                hit.pattern
+                for hit in residue_report(
+                    institutional.text,
+                    retained_institutional_emails=institutional.retained_institutional_emails,
+                )
+            },
+        )
+        self.assertIn("EMAIL", {hit.pattern for hit in residue_report("raw@mail.de")})
+
+    def test_institutional_ust_id_does_not_trigger_digit_residue(self) -> None:
+        text = "Klinik Musterstadt\nUst-ID Nr. DE252426446"
+
+        self.assertNotIn("DIGIT_RUN", {hit.pattern for hit in residue_report(text)})
+
     def test_residue_gate_blocks_without_writing_patient_memory(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

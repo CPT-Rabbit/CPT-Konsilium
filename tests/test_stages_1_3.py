@@ -180,7 +180,7 @@ class StagesOneToThreeTest(unittest.TestCase):
             self.assertIn("case-1", (root / "patients" / "case-1" / "consilium" / "latest.json").read_text())
             self.assertNotIn("Bob Smith", json.dumps(report))
 
-            draft_path = doctor_letter(root, "case-1", language="de")
+            draft_path = doctor_letter(root, "case-1")
             draft = draft_path.read_text(encoding="utf-8")
             self.assertIn("[PATIENT_1]", draft)
             self.assertNotIn("Anna Mueller", draft)
@@ -189,15 +189,9 @@ class StagesOneToThreeTest(unittest.TestCase):
             self.assertIn("Anna Mueller", rendered)
             self.assertIn("Hauptstrasse 7", rendered)
 
-            english = doctor_letter(root, "case-1", language="en").read_text(encoding="utf-8")
-            russian = doctor_letter(root, "case-1", language="ru").read_text(encoding="utf-8")
-            self.assertIn("Dear doctor", english)
-            self.assertIn("Уважаемый врач", russian)
-            self.assertIn("[PATIENT_1]", english)
-            self.assertIn("[PATIENT_1]", russian)
-
-            with self.assertRaises(ValueError):
-                doctor_letter(root, "case-1", language="fr")
+            for language in ("en", "ru", "fr"):
+                with self.assertRaisesRegex(ValueError, "only German doctor letters are supported"):
+                    doctor_letter(root, "case-1", language=language)
 
             monitor = monitor_review(root, ["case-1", "case-2"])
             self.assertEqual({item["patient_id"] for item in monitor["patients"]}, {"case-1", "case-2"})

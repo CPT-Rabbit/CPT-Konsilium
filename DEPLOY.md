@@ -94,7 +94,7 @@ docker compose -f docker-compose.mac.yml run --rm konsilium \
 docker compose -f docker-compose.mac.yml run --rm konsilium \
   --config /config/config.yaml review --patient cli-smoke --roles internist,endocrinologist
 docker compose -f docker-compose.mac.yml run --rm konsilium \
-  --config /config/config.yaml letter --patient cli-smoke --language de
+  --config /config/config.yaml letter --patient cli-smoke
 docker compose -f docker-compose.mac.yml run --rm konsilium \
   --config /config/config.yaml letter-render --patient cli-smoke \
   --file /memory/patients/cli-smoke/letters/doctor_letter_de.md

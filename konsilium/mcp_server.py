@@ -58,10 +58,10 @@ class KonsiliumOps:
             model_client=_model_client(self.config),
         )
 
-    def doctor_letter(self, patient_id: str, language: str) -> dict:
+    def doctor_letter(self, patient_id: str) -> dict:
         from .letters import doctor_letter
 
-        path = doctor_letter(self.root, patient_id, language=language)
+        path = doctor_letter(self.root, patient_id)
         return {"path": str(path), "content": path.read_text(encoding="utf-8")}
 
     def memory_search(self, patient_id: str, query: str) -> list[dict]:

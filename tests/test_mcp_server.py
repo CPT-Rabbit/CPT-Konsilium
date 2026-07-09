@@ -22,7 +22,7 @@ class McpServerTest(unittest.TestCase):
 
             ingest = ops.ingest_document("case-1", str(source), synthetic=True)
             preview = ops.deid_preview(str(source))
-            draft = ops.doctor_letter("case-1", "de")
+            draft = ops.doctor_letter("case-1")
             vault = json.loads((root / "identity_vault" / "case-1.json").read_text(encoding="utf-8"))
 
             self.assertNotIn("letter-render", MCP_TOOL_NAMES)

@@ -54,6 +54,18 @@
 - Entity values shorter than three word characters are ignored at the de-ID boundary, independent of detector behavior.
 - Residue blocks malformed or unbalanced token brackets, referral/page-header surnames, spelled German DOBs and OCR-split numeric years.
 
+## 2026-07-10 - German-Only Scope
+
+- Konsilium accepts German healthcare documents and produces German doctor-letter drafts only.
+- The de-ID rules are based on German document conventions (`geb.`, `wh.`, `Pat.-Nr.` and letterhead formulas), and German Arztbrief style is the only real-material workflow that is currently testable.
+- English and Russian medical-document support is intentionally not advertised or implemented because it has not been verified on real material.
+
+## 2026-07-10 - OCR DOB and Contact Verification
+
+- Any `Geburtsdatum` or `geb.` line without a nearby `age <n>` replacement blocks ingest, independent of OCR date format.
+- Institutional email retention is an explicit de-ID decision passed to the residue gate; the gate blocks every other remaining email and does not run its own institutional heuristic.
+- Compact physician names remain PERSON data; public institutional footer identifiers such as Ust-ID remain plain context.
+
 ## 2026-07-09 - Public Snapshot Hygiene
 
 - Public releases are sanitized working-tree snapshots, not private history pushes.

@@ -32,6 +32,7 @@ deidentification:
   residue:
     CORRUPTED_TOKEN: block
     DOB: block
+    DOB_MARKER: block
     PERSON_HEADER: block
     STREET: block
     PLZ_CITY: block
@@ -39,6 +40,7 @@ deidentification:
     DIGIT_RUN: block
     KVNR: block
     CASE_NUMBER: block
+    EMAIL: block
 
 auth:
   file_env: KONSILIUM_AUTH_FILE

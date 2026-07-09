@@ -44,7 +44,7 @@ class CliTest(unittest.TestCase):
             preview_out = _run("--config", config, "deid-preview", "--file", source)
             with patch("konsilium.__main__._model_client", return_value=BadModel()):
                 review_out = _run("--config", config, "review", "--patient", "case-1", "--roles", "internist")
-            letter_out = _run("--config", config, "letter", "--patient", "case-1", "--language", "de")
+            letter_out = _run("--config", config, "letter", "--patient", "case-1")
             rendered = _run("--config", config, "letter-render", "--patient", "case-1", "--file", letter_out.strip())
             monitor_out = _run("--config", config, "monitor", "--patients", "case-1")
             memory_out = _run(

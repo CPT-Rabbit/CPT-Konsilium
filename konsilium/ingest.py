@@ -75,7 +75,11 @@ def ingest_text(
     vault_path = vault_dir / f"{safe_patient_id}.json"
     existing_vault = _read_vault(vault_path)
     document = deidentify(text, existing_vault=existing_vault, pii_detector=pii_detector)
-    assert_no_blocking_residue(document.text, residue_policy)
+    assert_no_blocking_residue(
+        document.text,
+        residue_policy,
+        retained_institutional_emails=document.retained_institutional_emails,
+    )
     patient_dir.mkdir(parents=True, exist_ok=True)
     vault_dir.mkdir(parents=True, exist_ok=True)
     documents_path = patient_dir / "documents.md"
@@ -177,7 +181,11 @@ def deid_preview(
     if detector is not None:
         _check_detector(detector)
     document = deidentify(extracted.text, pii_detector=detector)
-    hits = residue_report(document.text, config.deidentification.residue)
+    hits = residue_report(
+        document.text,
+        config.deidentification.residue,
+        retained_institutional_emails=document.retained_institutional_emails,
+    )
     preview_dir = Path(root or config.runtime.patient_root) / "previews"
     preview_dir.mkdir(parents=True, exist_ok=True)
     name = _safe_id(Path(path).stem) if Path(path).stem.strip() else "document"

@@ -33,7 +33,6 @@ def main(argv: list[str] | None = None) -> None:
 
     letter = subparsers.add_parser("letter", help="write a tokenized doctor-letter draft")
     letter.add_argument("--patient", required=True)
-    letter.add_argument("--language", required=True, choices=["de", "en", "ru"])
 
     render = subparsers.add_parser("letter-render", help="render PII to stdout only")
     render.add_argument("--patient", required=True)
@@ -178,7 +177,7 @@ def _review(config: Config, args: argparse.Namespace) -> None:
 def _letter(config: Config, args: argparse.Namespace) -> None:
     from .letters import doctor_letter
 
-    print(doctor_letter(config.runtime.patient_root, args.patient, language=args.language))
+    print(doctor_letter(config.runtime.patient_root, args.patient))
 
 
 def _letter_render(config: Config, args: argparse.Namespace) -> None:

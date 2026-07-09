@@ -68,6 +68,8 @@ PDF / text document
 
 ## Features
 
+- **Scope: German healthcare documents.** De-identification and document
+  conventions are verified against German medical material only.
 - **Ingest pipeline**: PDF/text → local de-ID → model-structured Markdown
   (timeline, problem list, medications, labs) per patient.
 - **Patient-scoped hybrid memory**: embedded LanceDB index over canonical
@@ -78,8 +80,8 @@ PDF / text document
   `roles/` — internist, endocrinologist, neurologist, add your own) gets an
   independent model pass; a chair-synthesis pass merges them and surfaces
   real disagreements instead of smoothing them over.
-- **Doctor letters** in German, English, or Russian: tokenized drafts on disk,
-  local-only PII rendering.
+- **Doctor letters in German**: tokenized drafts on disk, local-only PII
+  rendering.
 - **Literature grounding**: PubMed (NCBI E-utilities) and Semantic Scholar
   search with the egress guard in front; AWMF guideline lookup.
 - **Monitoring**: periodic multi-patient review reports.
@@ -136,7 +138,7 @@ konsilium ingest --patient case-1 --file /memory/inbox/befund.pdf
 konsilium deid-preview --file /memory/inbox/befund.pdf
 konsilium review --patient case-1 --roles internist,endocrinologist \
   --question "What should the next appointment clarify?"
-konsilium letter --patient case-1 --language de
+konsilium letter --patient case-1
 konsilium letter-render --patient case-1 \
   --file patients/case-1/letters/doctor_letter_de.md   # PII to stdout only
 konsilium memory-search --patient case-1 --query "HbA1c trend"
