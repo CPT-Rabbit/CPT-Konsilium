@@ -41,6 +41,19 @@
 - `deid-preview` writes local preview, local vault and PII-free residue report under `previews/`; it does not structure, index or ingest the document.
 - The local Ollama detector uses overlapping text chunks and deduplicates entities across chunks; defaults are 900 characters with 150 character overlap.
 
+## 2026-07-10 - Address Policy
+
+- Institutional addresses and phone/fax contacts remain plain text when nearby letterhead markers identify a public institution; private address context has priority and ambiguous addresses are tokenized.
+- Physician names remain PERSON entities even on institutional letterheads.
+- The detector ignores generic German/English role words and one-letter PERSON values; only proper-name-like PERSON values are accepted.
+- Rationale: institutional contact details are public clinical context, while private identity is not.
+
+## 2026-07-10 - Token-Safe Replacement
+
+- Detector entities are applied longest-first as whole values and never inside existing `[KIND_n]` spans.
+- Entity values shorter than three word characters are ignored at the de-ID boundary, independent of detector behavior.
+- Residue blocks malformed or unbalanced token brackets, referral/page-header surnames, spelled German DOBs and OCR-split numeric years.
+
 ## 2026-07-09 - Public Snapshot Hygiene
 
 - Public releases are sanitized working-tree snapshots, not private history pushes.

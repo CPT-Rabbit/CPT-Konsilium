@@ -81,7 +81,7 @@ class Stage1Test(unittest.TestCase):
         document = deidentify(
             "\n".join(
                 [
-                    "Klinik Musterstadt",
+                    "EEG Befund",
                     "Musterstraße 12",
                     "Muster strasse 13",
                     "10115 Berlin",
@@ -100,6 +100,101 @@ class Stage1Test(unittest.TestCase):
         self.assertFalse(
             {hit.pattern for hit in residue_report(document.text)}
             & {"DOB", "STREET", "PLZ_CITY", "CASE_NUMBER", "PHONE"}
+        )
+
+    def test_institutional_letterhead_stays_while_physician_name_is_tokenized(self) -> None:
+        document = deidentify(
+            "\n".join(
+                [
+                    "Klinikum Musterstadt",
+                    "Dr. med. Holger Steinbrecher",
+                    "Musterstraße 12",
+                    "10115 Berlin",
+                    "Tel.: 030 1234567",
+                    "Fax: 030 7654321",
+                    "www.klinikum.example",
+                ]
+            ),
+            pii_detector=lambda text: [
+                PiiEntity("PERSON", "Dr. med. Holger Steinbrecher"),
+                PiiEntity("ADDRESS", "Musterstraße 12"),
+                PiiEntity("PHONE", "030 1234567"),
+            ],
+        )
+
+        self.assertIn("Musterstraße 12", document.text)
+        self.assertIn("10115 Berlin", document.text)
+        self.assertIn("030 1234567", document.text)
+        self.assertNotIn("Holger Steinbrecher", document.text)
+        self.assertIn("[PATIENT_1]", document.text)
+        self.assertFalse(
+            {hit.pattern for hit in residue_report(document.text)}
+            & {"STREET", "PLZ_CITY", "PHONE", "DIGIT_RUN"}
+        )
+
+    def test_ambiguous_bare_address_is_tokenized(self) -> None:
+        document = deidentify("Musterstraße 12\n10115 Berlin")
+
+        self.assertNotIn("Musterstraße 12", document.text)
+        self.assertNotIn("10115 Berlin", document.text)
+
+    def test_entity_replacement_preserves_words_and_existing_tokens(self) -> None:
+        document = deidentify(
+            "Rolandofoki Roland B [DOB_2]",
+            pii_detector=lambda text: [
+                PiiEntity("PERSON", "B"),
+                PiiEntity("PERSON", "Roland"),
+                PiiEntity("PERSON", "DOB"),
+            ],
+        )
+
+        self.assertEqual(document.text, "Rolandofoki [PATIENT_1] B [DOB_2]")
+        self.assertEqual(document.vault, {"[PATIENT_1]": "Roland"})
+
+    def test_longest_person_entity_replaces_before_shorter_overlap(self) -> None:
+        document = deidentify(
+            "Anna Müller",
+            pii_detector=lambda text: [PiiEntity("PERSON", "Anna"), PiiEntity("PERSON", "Anna Müller")],
+        )
+
+        self.assertEqual(document.text, "[PATIENT_1]")
+        self.assertEqual(document.vault, {"[PATIENT_1]": "Anna Müller"})
+
+    def test_residue_gate_blocks_corrupted_token_syntax(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaisesRegex(ResidueError, r"CORRUPTED_TOKEN lines 1"):
+                ingest_text("case-1", "[DO[PATIENT_8]_2]", root, allow_synthetic=True)
+
+            self.assertFalse((root / "patients").exists())
+
+        patterns = {hit.pattern for hit in residue_report("[PATIENT_1")}
+        self.assertIn("CORRUPTED_TOKEN", patterns)
+
+    def test_regex_deid_handles_page_headers_spelled_dob_and_spaced_case_numbers(self) -> None:
+        self.assertIn("PERSON_HEADER", {hit.pattern for hit in residue_report("Seite 1 von 2, Mueller,")})
+        document = deidentify(
+            "\n".join(
+                [
+                    "Patienten Mueller,",
+                    "Seite 1 von 2, Mueller,",
+                    "Geburtsdatum Sonntag, 19. Juli 2015",
+                    "geb. 19.07.201 5",
+                    "wohnhaft: Feldstieg 7",
+                    "Musterstr. 8",
+                    "Pat. Nr. 12345678",
+                    "Aufn. Nr. A1234567",
+                ]
+            )
+        )
+
+        for value in ("Mueller", "Sonntag, 19. Juli 2015", "19.07.201 5", "Feldstieg 7", "Musterstr. 8", "12345678", "A1234567"):
+            self.assertNotIn(value, document.text)
+        self.assertEqual(document.text.count("[PATIENT_1]"), 2)
+        self.assertGreaterEqual(document.text.count("age "), 2)
+        self.assertFalse(
+            {hit.pattern for hit in residue_report(document.text)}
+            & {"DOB", "PERSON_HEADER", "STREET", "CASE_NUMBER"}
         )
 
     def test_residue_gate_blocks_without_writing_patient_memory(self) -> None:
@@ -520,6 +615,23 @@ class Stage1Test(unittest.TestCase):
 
         self.assertGreater(len(calls), 1)
         self.assertEqual(entities, [PiiEntity("PERSON", "Alice"), PiiEntity("PERSON", "Bob")])
+
+    def test_ollama_detector_drops_generic_and_one_letter_person_entities(self) -> None:
+        calls = []
+
+        def fake_fetch(url: str, payload: dict, timeout_s: float) -> str:
+            calls.append(payload)
+            return json.dumps({"response": json.dumps({"entities": [
+                {"kind": "PERSON", "value": "Eltern"},
+                {"kind": "PERSON", "value": "B"},
+                {"kind": "PERSON", "value": "Dr. Ingrid Vasquez-Moreno"},
+            ]})})
+
+        entities = OllamaPiiDetector(model="local-med-ner", fetch=fake_fetch)("Eltern und Dr. Ingrid")
+
+        self.assertEqual(entities, [PiiEntity("PERSON", "Dr. Ingrid Vasquez-Moreno")])
+        self.assertIn("Extract proper names only", calls[0]["prompt"])
+        self.assertIn("generic role words like Eltern, Mutter, Patient", calls[0]["prompt"])
 
     def test_stage1_smoke_reports_pii_boundary(self) -> None:
         with TemporaryDirectory() as tmp:

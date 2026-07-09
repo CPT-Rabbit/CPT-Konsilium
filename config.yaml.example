@@ -23,7 +23,9 @@ deidentification:
   chunk_size: 900
   chunk_overlap: 150
   residue:
+    CORRUPTED_TOKEN: block
     DOB: block
+    PERSON_HEADER: block
     STREET: block
     PLZ_CITY: block
     PHONE: block

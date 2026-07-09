@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Callable
 from urllib.request import Request, urlopen
 
@@ -8,6 +9,12 @@ from .deid import PiiEntity
 from .util import json_block
 
 Fetch = Callable[[str, dict, float], str]
+
+_ROLE_WORDS = {
+    "eltern", "mutter", "vater", "kind", "sohn", "tochter", "familie", "patient", "patientin",
+    "ehefrau", "ehemann", "geschwister", "junge", "mädchen", "parents", "mother", "father", "child",
+}
+_CAPITALIZED_WORD = re.compile(r"\b[A-ZÄÖÜ][a-zäöüß]{2,}\b")
 
 _ENTITY_SCHEMA = {
     "type": "object",
@@ -76,7 +83,7 @@ class OllamaPiiDetector:
         return [
             PiiEntity(str(item.get("kind") or ""), str(item.get("value") or ""))
             for item in entities
-            if isinstance(item, dict) and item.get("kind") and item.get("value")
+            if isinstance(item, dict) and _valid_entity(item)
         ]
 
     def healthcheck(self) -> None:
@@ -102,6 +109,16 @@ def _chunks(text: str, size: int, overlap: int):
             break
 
 
+def _valid_entity(item: dict) -> bool:
+    kind = str(item.get("kind") or "").strip().upper()
+    value = str(item.get("value") or "").strip()
+    if not kind or not value:
+        return False
+    if kind != "PERSON":
+        return True
+    return value.lower() not in _ROLE_WORDS and bool(_CAPITALIZED_WORD.search(value))
+
+
 def _entities(response) -> list[dict]:
     if isinstance(response, str):
         response = json.loads(json_block(response))
@@ -120,6 +137,7 @@ def _prompt(text: str) -> str:
         "Extract ALL personally identifying information from this medical text. "
         "PERSON includes every named human: patients, physicians, doctors (Dr., Dr. med., Prof.), "
         "nurses, relatives, contacts. "
+        "Extract proper names only; never generic role words like Eltern, Mutter, Patient. "
         "Return strict JSON only matching the provided schema. "
         "Allowed kinds: PERSON, ADDRESS, DOB, INSURANCE, EMAIL, PHONE. "
         "Do not include diagnoses, labs, medications, dates of medical events, or symptoms.\n\n"
