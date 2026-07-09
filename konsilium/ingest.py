@@ -11,6 +11,7 @@ from tempfile import TemporaryDirectory
 from typing import Callable
 
 from .deid import PiiDetector, deidentify
+from .util import json_block
 
 _LOG = logging.getLogger(__name__)
 _DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
@@ -327,11 +328,11 @@ def _model_structure(text: str, prepass: dict[str, list[str]], structure_model) 
         }
     ]
     if hasattr(structure_model, "build_kwargs") and hasattr(structure_model, "call"):
-        response = structure_model.call(structure_model.build_kwargs(messages, system_prompt, []))
+        response = structure_model.call(structure_model.build_kwargs(messages, system_prompt, [], json_mode=True))
         payload = getattr(response, "content", response)
     else:
         payload = structure_model(messages, system_prompt)
-    data = json.loads(payload) if isinstance(payload, str) else payload
+    data = json.loads(json_block(payload)) if isinstance(payload, str) else payload
     if not isinstance(data, dict):
         raise ValueError("structuring model response must be a JSON object")
     return _coerce_structure(data)

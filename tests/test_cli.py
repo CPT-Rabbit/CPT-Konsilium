@@ -15,7 +15,7 @@ from konsilium.__main__ import main
 class CliTest(unittest.TestCase):
     def test_operator_synthetic_flow(self) -> None:
         class BadModel:
-            def build_kwargs(self, messages, system_prompt, tools):
+            def build_kwargs(self, messages, system_prompt, tools, *, json_mode=False):
                 return {}
 
             def call(self, kwargs):

@@ -4,6 +4,7 @@ import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from konsilium import (
@@ -265,14 +266,25 @@ class Stage1Test(unittest.TestCase):
             def __init__(self) -> None:
                 self.calls = []
 
-            def __call__(self, messages, system_prompt):
-                self.calls.append({"messages": messages, "system_prompt": system_prompt})
-                return {
+            def build_kwargs(self, messages, system_prompt, tools, *, json_mode=False):
+                call = {
+                    "messages": messages,
+                    "system_prompt": system_prompt,
+                    "stream": not json_mode,
+                    "max_tokens": 4096,
+                }
+                if json_mode:
+                    call["response_format"] = {"type": "json_object"}
+                self.calls.append(call)
+                return call
+
+            def call(self, kwargs):
+                return SimpleNamespace(content=json.dumps({
                     "timeline": ["2026-07-02 nephrology review"],
                     "problems": ["chronische Nierenkrankheit", "iron deficiency anemia"],
                     "meds": ["Apixaban 5 mg zweimal taeglich", "rivaroxaban 20 mg nightly"],
                     "labs": ["Kreatinin 1.8 mg/dl", "ferritin 12 ng/mL"],
-                }
+                }))
 
         def detector(text: str) -> list[PiiEntity]:
             return [
@@ -314,6 +326,8 @@ class Stage1Test(unittest.TestCase):
             self.assertNotIn("Frau Mueller", prompt_payload)
             self.assertNotIn("John Smith", prompt_payload)
             self.assertNotIn("Hauptstrasse", prompt_payload)
+            self.assertFalse(model.calls[0]["stream"])
+            self.assertEqual(model.calls[0]["response_format"], {"type": "json_object"})
 
     def test_runtime_ingest_requires_real_docs_enabled_model_and_reachable_detector(self) -> None:
         config = Config()

@@ -108,6 +108,14 @@ class ModelProviderTest(unittest.TestCase):
         self.assertEqual(kwargs["tools"][0]["name"], "case_review")
         self.assertEqual(kwargs["input"][2]["type"], "function_call_output")
 
+        json_kwargs = build_responses_kwargs({
+            "messages": [],
+            "max_tokens": 4096,
+            "response_format": {"type": "json_object"},
+        })
+        self.assertEqual(json_kwargs["max_output_tokens"], 4096)
+        self.assertEqual(json_kwargs["text"], {"format": {"type": "json_object"}})
+
         result = normalize_stream_events(
             [
                 SimpleNamespace(type="response.reasoning_summary_text.delta", delta="Checked "),

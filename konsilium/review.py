@@ -7,6 +7,7 @@ from pathlib import Path
 from .knowledge import SearchResult, guidelines_lookup
 from .memory import PatientMemory
 from .roles import load_role_profiles
+from .util import json_block
 
 _ROLE_FOCUS = {
     "internist": "overall differential and primary-care coordination",
@@ -201,9 +202,9 @@ def _model_report(
 
 
 def _model_json(model_client, messages: list[dict], system_prompt: str) -> dict:
-    kwargs = model_client.build_kwargs(messages, system_prompt, [])
+    kwargs = model_client.build_kwargs(messages, system_prompt, [], json_mode=True)
     response = model_client.call(kwargs)
-    payload = json.loads(response.content)
+    payload = json.loads(json_block(response.content))
     if not isinstance(payload, dict):
         raise ValueError("model response is not an object")
     return payload

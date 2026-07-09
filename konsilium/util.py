@@ -55,3 +55,9 @@ def strip_think_blocks(content: str | None) -> str:
     content = re.sub(_THINK_OPEN_TO_END, "", content, flags=re.DOTALL | re.IGNORECASE)
     content = re.sub(_THINK_DANGLING, "", content, flags=re.IGNORECASE)
     return content.strip()
+
+
+def json_block(text: str) -> str:
+    """Return JSON from a fenced model response, preserving bare JSON."""
+    match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.S | re.I)
+    return match.group(1) if match else text

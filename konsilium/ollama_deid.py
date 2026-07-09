@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Callable
 from urllib.request import Request, urlopen
 
 from .deid import PiiEntity
+from .util import json_block
 
 Fetch = Callable[[str, dict, float], str]
 
@@ -79,7 +79,7 @@ def _fetch(url: str, payload: dict, timeout_s: float) -> str:
 
 def _entities(response) -> list[dict]:
     if isinstance(response, str):
-        response = json.loads(_json_block(response))
+        response = json.loads(json_block(response))
     if isinstance(response, dict):
         if isinstance(response.get("entities"), list):
             return response["entities"]
@@ -88,11 +88,6 @@ def _entities(response) -> list[dict]:
     if isinstance(response, list):
         return response
     raise ValueError("Ollama PII detector response must contain entities")
-
-
-def _json_block(text: str) -> str:
-    match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.S | re.I)
-    return match.group(1) if match else text
 
 
 def _prompt(text: str) -> str:

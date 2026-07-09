@@ -117,6 +117,10 @@ def build_responses_kwargs(chat_kwargs: dict[str, Any]) -> dict[str, Any]:
     }
     if chat_kwargs.get("model"):
         result["model"] = chat_kwargs["model"]
+    if chat_kwargs.get("max_tokens"):
+        result["max_output_tokens"] = chat_kwargs["max_tokens"]
+    if chat_kwargs.get("response_format") == {"type": "json_object"}:
+        result["text"] = {"format": {"type": "json_object"}}
     if chat_kwargs.get("tools"):
         result["tools"] = _tools(chat_kwargs["tools"])
     return result

@@ -213,15 +213,23 @@ class StagesOneToThreeTest(unittest.TestCase):
             def __init__(self) -> None:
                 self.calls = []
 
-            def build_kwargs(self, messages, system_prompt, tools):
-                call = {"messages": messages, "system_prompt": system_prompt, "tools": tools}
+            def build_kwargs(self, messages, system_prompt, tools, *, json_mode=False):
+                call = {
+                    "messages": messages,
+                    "system_prompt": system_prompt,
+                    "tools": tools,
+                    "stream": not json_mode,
+                    "max_tokens": 4096,
+                }
+                if json_mode:
+                    call["response_format"] = {"type": "json_object"}
                 self.calls.append(call)
                 return call
 
             def call(self, kwargs):
                 if "Chair synthesis" in kwargs["system_prompt"]:
                     return SimpleNamespace(
-                        content=json.dumps(
+                        content="```json\n" + json.dumps(
                             {
                                 "chair_summary": "Endocrine risk needs specialist follow-up.",
                                 "claims": ["Chair synthesized the role outputs."],
@@ -229,16 +237,18 @@ class StagesOneToThreeTest(unittest.TestCase):
                                 "disagreements": ["internist vs endocrinologist: urgency differs."],
                                 "recommended_next_step": "Discuss HbA1c trend with the treating physician.",
                             }
-                        )
+                        ) + "\n```",
+                        reasoning="Internal reasoning must stay separate.",
                     )
                 role = "endocrinologist" if "endocrinologist" in kwargs["system_prompt"] else "internist"
                 return SimpleNamespace(
-                    content=json.dumps(
+                    content="```json\n" + json.dumps(
                         {
                             "claims": [f"{role} role claim."],
                             "open_questions": [f"{role} question?"],
                         }
-                    )
+                    ) + "\n```",
+                    reasoning="Internal reasoning must stay separate.",
                 )
 
         with TemporaryDirectory() as tmp:
@@ -277,6 +287,9 @@ class StagesOneToThreeTest(unittest.TestCase):
             self.assertEqual(report["perspectives"]["endocrinologist"]["claims"], ["endocrinologist role claim."])
             self.assertEqual(report["chair_summary"], "Endocrine risk needs specialist follow-up.")
             self.assertEqual(report["disagreements"], ["internist vs endocrinologist: urgency differs."])
+            self.assertEqual(report["model_status"], "used")
+            self.assertTrue(all(not call["stream"] for call in model.calls))
+            self.assertTrue(all(call["response_format"] == {"type": "json_object"} for call in model.calls))
             prompt_payload = json.dumps(model.calls, ensure_ascii=False)
             self.assertIn("[PATIENT_1]", prompt_payload)
             self.assertNotIn("Anna Mueller", prompt_payload)
@@ -285,7 +298,7 @@ class StagesOneToThreeTest(unittest.TestCase):
 
     def test_case_review_falls_back_when_model_response_is_not_json(self) -> None:
         class BadModel:
-            def build_kwargs(self, messages, system_prompt, tools):
+            def build_kwargs(self, messages, system_prompt, tools, *, json_mode=False):
                 return {"messages": messages, "system_prompt": system_prompt, "tools": tools}
 
             def call(self, kwargs):
@@ -310,8 +323,8 @@ class StagesOneToThreeTest(unittest.TestCase):
             def __init__(self) -> None:
                 self.kwargs = {}
 
-            def build_kwargs(self, messages, system_prompt, tools):
-                self.kwargs = {"messages": messages, "system_prompt": system_prompt, "tools": tools}
+            def build_kwargs(self, messages, system_prompt, tools, *, json_mode=False):
+                self.kwargs = {"messages": messages, "system_prompt": system_prompt, "tools": tools, "json_mode": json_mode}
                 return self.kwargs
 
             def call(self, kwargs):
@@ -346,6 +359,17 @@ class StagesOneToThreeTest(unittest.TestCase):
             self.assertIn("coordination and medication review", prompt_payload)
             self.assertNotIn("Anna Mueller", prompt_payload)
 
+    def test_json_model_calls_disable_streaming_and_request_json_object(self) -> None:
+        try:
+            from konsilium.model_client import ModelClient
+        except ModuleNotFoundError as error:
+            self.skipTest(f"model runtime dependency is unavailable: {error.name}")
+
+        kwargs = ModelClient(SimpleNamespace(kind="custom")).build_kwargs([], "strict JSON", [], json_mode=True)
+
+        self.assertFalse(kwargs["stream"])
+        self.assertEqual(kwargs["max_tokens"], 4096)
+        self.assertEqual(kwargs["response_format"], {"type": "json_object"})
 
 if __name__ == "__main__":
     unittest.main()

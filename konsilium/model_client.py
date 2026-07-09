@@ -69,13 +69,22 @@ class ModelClient:
         self.event_sink = event_sink
 
     # ── M5: request assembly ──────────────────────────────────────────
-    def build_kwargs(self, messages: list[dict], system_prompt: str, tools: list[dict]) -> dict:
+    def build_kwargs(
+        self,
+        messages: list[dict],
+        system_prompt: str,
+        tools: list[dict],
+        *,
+        json_mode: bool = False,
+    ) -> dict:
         api_messages = [{"role": "system", "content": system_prompt}, *messages]
         kwargs: dict[str, Any] = {
             "messages": api_messages,
-            "max_tokens": self.max_tokens,
-            "stream": self.stream,
+            "max_tokens": 4096 if json_mode else self.max_tokens,
+            "stream": False if json_mode else self.stream,
         }
+        if json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
         if tools:
             kwargs["tools"] = tools
         return kwargs
@@ -316,14 +325,18 @@ class ModelClient:
         deadline: float | None = None,
     ) -> ModelResponse:
         """Codex subscription backend uses Responses API, not Chat Completions."""
-        from .providers.codex_responses import build_responses_kwargs, normalize_stream_events
+        from .providers.codex_responses import build_responses_kwargs, normalize_response, normalize_stream_events
 
         box: dict[str, Any] = {}
 
         def _run():
             try:
-                with client.responses.stream(**build_responses_kwargs(kwargs)) as stream:
-                    box["normalized"] = normalize_stream_events(stream)
+                request = build_responses_kwargs(kwargs)
+                if kwargs.get("stream"):
+                    with client.responses.stream(**request) as stream:
+                        box["normalized"] = normalize_stream_events(stream)
+                else:
+                    box["normalized"] = normalize_response(client.responses.create(**request))
             except Exception as error:  # noqa: BLE001 - propagate to the main thread
                 box["err"] = error
 
