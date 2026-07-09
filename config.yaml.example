@@ -1,0 +1,25 @@
+# Example config for local/server smoke. Secrets stay in env files, not here.
+
+model:
+  provider: custom
+  model: "workers-ai/@cf/google/gemma-4-26b-a4b-it"
+  base_url: "https://gateway.ai.cloudflare.com/v1/<acct>/<gw>/compat"
+  api_key_env: CF_AIG_TOKEN
+  request_timeout_s: 120.0
+  stream: true
+
+memory:
+  root: /memory
+  collection: konsilium_memory
+
+runtime:
+  patient_root: /memory
+  allow_real_patient_docs: false  # non-synthetic ingest fails unless this is true and detector is configured/reachable
+
+deidentification:
+  ollama_url: "http://127.0.0.1:11434"
+  ollama_model: null   # The operator chooses before real patient documents are allowed.
+
+auth:
+  file_env: KONSILIUM_AUTH_FILE
+  default_path: /auth/auth.json

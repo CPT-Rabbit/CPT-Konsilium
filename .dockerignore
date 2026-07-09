@@ -1,0 +1,12 @@
+.git
+.codegraph
+.pytest_cache
+.ruff_cache
+.venv
+__pycache__
+*.pyc
+.DS_Store
+runtime
+secrets
+konsilium.egg-info
+uv.lock
