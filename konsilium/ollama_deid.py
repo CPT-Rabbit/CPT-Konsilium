@@ -97,7 +97,9 @@ def _json_block(text: str) -> str:
 
 def _prompt(text: str) -> str:
     return (
-        "Extract personally identifying information from this medical text. "
+        "Extract ALL personally identifying information from this medical text. "
+        "PERSON includes every named human: patients, physicians, doctors (Dr., Dr. med., Prof.), "
+        "nurses, relatives, contacts. "
         "Return strict JSON only matching the provided schema. "
         "Allowed kinds: PERSON, ADDRESS, DOB, INSURANCE, EMAIL, PHONE. "
         "Do not include diagnoses, labs, medications, dates of medical events, or symptoms.\n\n"
