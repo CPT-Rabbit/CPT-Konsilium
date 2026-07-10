@@ -158,6 +158,51 @@ class Stage1Test(unittest.TestCase):
         self.assertIn("STREET", patterns)
         self.assertIn("PLZ_CITY", patterns)
 
+    def test_model_address_entities_reject_clinical_words_consistently(self) -> None:
+        source = "\n".join([
+            "Es seien keine bilateral tonisch-klonische Anfälle beobachtet worden.",
+            "Keine Auffälligkeiten und keine expressive Sprache.",
+            "Dies erfolgte ohne Sedierung und nicht stationär.",
+            "Hinweise zu seiner zweisprachigen Erziehung.",
+            "Sehr geehrte Frau Kollegin,",
+        ])
+        document = deidentify(
+            source,
+            pii_detector=lambda text: [
+                PiiEntity("ADDRESS", "keine"),
+                PiiEntity("ADDRESS", "zweisprachigen"),
+                PiiEntity("ADDRESS", "Sehr"),
+                PiiEntity("ADDRESS", "Frau Kollegin"),
+            ],
+        )
+
+        self.assertEqual(document.text, source)
+        self.assertNotIn("[ADDR_", document.text)
+        self.assertEqual(
+            [(item.kind, item.reason) for item in document.rejected_entities],
+            [
+                ("ADDR", "generic_word"),
+                ("ADDR", "not_address_like"),
+                ("ADDR", "generic_word"),
+                ("ADDR", "not_address_like"),
+            ],
+        )
+
+    def test_institutional_city_is_retained_but_patient_residence_is_tokenized(self) -> None:
+        institutional = "Hamburg, den 10.09.2025\nAmtsgericht Hamburg"
+        institution_document = deidentify(
+            institutional,
+            pii_detector=lambda text: [PiiEntity("ADDRESS", "Hamburg")],
+        )
+        residence_document = deidentify(
+            "[PATIENT_1] lebt auf Rügen.",
+            pii_detector=lambda text: [PiiEntity("ADDRESS", "Rügen")],
+        )
+
+        self.assertEqual(institution_document.text, institutional)
+        self.assertNotIn("Rügen", residence_document.text)
+        self.assertIn("[ADDR_1]", residence_document.text)
+
     def test_ambiguous_bare_address_is_tokenized(self) -> None:
         document = deidentify("Musterstraße 12\n10115 Berlin")
 
@@ -397,6 +442,22 @@ class Stage1Test(unittest.TestCase):
             self.assertNotIn("Anna Mueller", json.dumps(result, ensure_ascii=False))
             self.assertFalse((root / "patients").exists())
             self.assertFalse((root / "identity_vault").exists())
+
+    def test_deid_preview_reports_rejected_entities_without_values(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "clinical-note.txt"
+            source.write_text("Es wurden keine Anfälle beobachtet.", encoding="utf-8")
+
+            result = deid_preview(
+                Config.model_validate({"runtime": {"patient_root": root}}),
+                source,
+                pii_detector=lambda text: [PiiEntity("ADDRESS", "keine")],
+            )
+
+            report = json.loads(Path(result["residue_report_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(report["rejected_entities"], [{"kind": "ADDR", "reason": "generic_word"}])
+            self.assertNotIn("keine", json.dumps(report, ensure_ascii=False))
 
     def test_egress_guard_rejects_tokens_and_raw_pii(self) -> None:
         assert_safe_knowledge_query("metformin hba1c older adults guideline")
@@ -820,6 +881,8 @@ class Stage1Test(unittest.TestCase):
         self.assertIn("Dr. med.", calls[0][1]["prompt"])
         self.assertIn("recipient block", calls[0][1]["prompt"])
         self.assertIn("personal ADDRESS data", calls[0][1]["prompt"])
+        self.assertIn("never function words, negations", calls[0][1]["prompt"])
+        self.assertIn("Amtsgericht Hamburg", calls[0][1]["prompt"])
         self.assertIs(calls[0][1]["think"], False)
         self.assertEqual(calls[0][1]["options"], {"temperature": 0})
         self.assertEqual({call[2] for call in calls}, {321})

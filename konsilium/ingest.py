@@ -270,6 +270,7 @@ def deid_preview(
     vault_path.write_text(json.dumps(document.vault, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     report = {
         "hits": [hit.__dict__ for hit in hits],
+        "rejected_entities": [item.__dict__ for item in document.rejected_entities],
         "blocked": any(hit.action == "block" for hit in hits),
     }
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

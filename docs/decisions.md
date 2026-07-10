@@ -94,6 +94,8 @@
 - Postal addresses in recipient blocks are private even when an institutional letterhead marker is nearby.
 - A patient token adjacent to an address prevents institutional retention unless the block is clearly an institutional affiliation.
 - The deterministic tokenizer and residue-gate exemption use the same recipient classification.
+- Model-sourced ADDRESS values are validated before global substitution; clinical words and institutional city mentions are rejected unchanged.
+- Rejected model entities are recorded in preview reports only as PII-free kind/reason pairs.
 
 ## 2026-07-09 - Public Snapshot Hygiene
 

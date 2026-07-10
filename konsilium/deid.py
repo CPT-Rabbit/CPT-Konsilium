@@ -11,12 +11,19 @@ class DeidentifiedDocument:
     text: str
     vault: dict[str, str]
     retained_institutional_emails: tuple[str, ...] = ()
+    rejected_entities: tuple["RejectedEntity", ...] = ()
 
 
 @dataclass(frozen=True)
 class PiiEntity:
     kind: str
     value: str
+
+
+@dataclass(frozen=True)
+class RejectedEntity:
+    kind: str
+    reason: str
 
 
 PiiDetector = Callable[[str], list[PiiEntity]]
@@ -39,6 +46,12 @@ DEFAULT_RESIDUE_POLICY = {
 _MIN_ENTITY_CHARS = 3
 _PROTECTED_SPAN = re.compile(r"\[[A-Z][A-Z_]*_\d+\]|\bage\s+\d{1,3}\b", re.I)
 _STREET_SUFFIXES = r"straße|strasse|str\.?|weg|allee|platz|damm|ring|gasse|stieg|twiete|kamp|redder|chaussee|deich|brook|horst|wall|steig"
+_ADDRESS_MATERIAL = re.compile(rf"\d|(?:{_STREET_SUFFIXES})\b", re.I)
+_ADDRESS_DENYLIST = {
+    "keine", "kein", "keinen", "keinem", "keiner", "keines", "ohne", "nicht", "sehr",
+    "und", "oder", "der", "die", "das", "den", "dem", "ein", "eine", "einer", "eines",
+    "mit", "von", "zu", "im", "in", "am", "an",
+}
 _GERMAN_MONTHS = {
     "januar": 1, "februar": 2, "märz": 3, "maerz": 3, "april": 4, "mai": 5, "juni": 6,
     "juli": 7, "juëi": 7, "august": 8, "september": 9, "oktober": 10, "november": 11, "dezember": 12,
@@ -202,6 +215,7 @@ def deidentify(
     vault = dict(existing_vault or {})
     counts: dict[str, int] = _counts(vault)
     retained_emails: set[str] = set()
+    rejected_entities: list[RejectedEntity] = []
     today = today or date.today()
 
     def token(kind: str, value: str) -> str:
@@ -220,11 +234,17 @@ def deidentify(
             clean,
         )
     if pii_detector is not None:
-        entities = [
-            (_normal_kind(entity.kind), entity.value.strip())
-            for entity in pii_detector(clean)
-            if _normal_kind(entity.kind) and _valid_entity_value(entity.value)
-        ]
+        entities = []
+        for entity in pii_detector(clean):
+            kind = _normal_kind(entity.kind)
+            value = entity.value.strip()
+            if not kind or not _valid_entity_value(value):
+                continue
+            rejection = _model_entity_rejection(kind, value, clean)
+            if rejection:
+                rejected_entities.append(RejectedEntity(kind, rejection))
+                continue
+            entities.append((kind, value))
         for kind, value in sorted(entities, key=lambda item: len(item[1]), reverse=True):
             clean = _replace_entity(clean, kind, value, token, today, retained_emails)
     for value in sorted(
@@ -234,7 +254,12 @@ def deidentify(
     ):
         clean = _replace_entity(clean, "PATIENT", value, token, today, retained_emails)
 
-    return DeidentifiedDocument(text=clean, vault=vault, retained_institutional_emails=tuple(sorted(retained_emails)))
+    return DeidentifiedDocument(
+        text=clean,
+        vault=vault,
+        retained_institutional_emails=tuple(sorted(retained_emails)),
+        rejected_entities=tuple(rejected_entities),
+    )
 
 
 def residue_report(
@@ -340,6 +365,32 @@ def _entity_replacement(kind: str, value: str, token, today: date) -> str:
 
 def _valid_entity_value(value: str) -> bool:
     return len(re.sub(r"\W", "", value or "")) >= _MIN_ENTITY_CHARS
+
+
+def _model_entity_rejection(kind: str, value: str, text: str) -> str | None:
+    if kind != "ADDR":
+        return None
+    normalized = value.strip(" .,;:").lower()
+    if normalized in _ADDRESS_DENYLIST:
+        return "generic_word"
+    if _ADDRESS_MATERIAL.search(value) or _patient_linked_place(value, text):
+        return None
+    return "not_address_like"
+
+
+def _patient_linked_place(value: str, text: str) -> bool:
+    pattern = re.compile(rf"(?<!\w){re.escape(value)}(?!\w)", re.I)
+    for match in pattern.finditer(text):
+        line = _line_at(text, match.start())
+        if re.search(
+            r"(?:\[PATIENT_\d+\]|\bPatient(?:in)?\b).{0,80}"
+            r"(?:wohnt|wohnhaft|lebt|Wohnort|Wohnsitz).{0,80}$|"
+            r"\b(?:Wohnort|Wohnsitz|wohnhaft)\s*:?[^\n]*$",
+            line,
+            re.I,
+        ):
+            return True
+    return False
 
 
 def institutional_email_allowlist(text: str) -> tuple[str, ...]:
