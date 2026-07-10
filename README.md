@@ -176,7 +176,7 @@ see de-identified content.
 memory/
   patients/<id>/
     passport.md          # summary
-    documents.md         # de-identified source documents
+    documents/           # one de-identified Markdown file per source document
     timeline/events.md   # dated events
     problems.md  meds.md  labs/labs.md
     hypotheses/  consilium/  letters/   # reports & tokenized drafts
@@ -187,6 +187,9 @@ memory/
 
 Everything canonical is plain Markdown. Point Obsidian at `memory/` for a
 zero-code dashboard of what the system has stored.
+Ingest returns the stored document path. Source files use
+`YYYY-MM-DD_Topic_Sender.md`; frontmatter records when the date had to fall
+back to the ingest date.
 
 ## Development
 

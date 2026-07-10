@@ -28,6 +28,7 @@ class McpServerTest(unittest.TestCase):
             self.assertNotIn("letter-render", MCP_TOOL_NAMES)
             self.assertIn("deid_preview", MCP_TOOL_NAMES)
             self.assertEqual(ingest["extraction"]["kind"], "text")
+            self.assertTrue(Path(ingest["document_path"]).is_file())
             self.assertNotIn("Anna Mueller", json.dumps(ingest["extraction"], ensure_ascii=False))
             self.assertNotIn("Anna Mueller", json.dumps(preview, ensure_ascii=False))
             self.assertIn("Anna Mueller", Path(preview["vault_path"]).read_text(encoding="utf-8"))

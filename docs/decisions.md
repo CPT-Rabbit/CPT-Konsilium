@@ -82,6 +82,13 @@
 - The stale timeout measures silence between streaming chunks only.
 - Blocking JSON and subscription-provider calls use `request_timeout_s` as their sole watchdog deadline.
 
+## 2026-07-10 - Per-Document Patient Memory
+
+- Each ingest writes one canonical Markdown file under `patients/<id>/documents/`; the ingest APIs return that path.
+- The existing structuring call also extracts document date, institutional topic, and institutional sender for the filename.
+- Unsafe metadata falls back to neutral ASCII slugs; missing document dates use the ingest date and record `date_source: ingest` in frontmatter.
+- Existing aggregate clinical files merge new structured entries, while the memory index retrieves the individual source documents.
+
 ## 2026-07-09 - Public Snapshot Hygiene
 
 - Public releases are sanitized working-tree snapshots, not private history pushes.

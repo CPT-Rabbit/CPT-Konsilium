@@ -139,7 +139,7 @@ def _ingest(config: Config, args: argparse.Namespace) -> None:
     if args.from_preview:
         if args.synthetic:
             raise ValueError("--synthetic cannot be combined with --from-preview")
-        patient_dir = ingest_from_preview(
+        document_path = ingest_from_preview(
             config,
             args.patient,
             args.from_preview,
@@ -148,7 +148,7 @@ def _ingest(config: Config, args: argparse.Namespace) -> None:
         stats = {"kind": "reviewed_preview"}
     elif args.synthetic:
         extracted = extract_text_with_stats(args.file)
-        patient_dir = ingest_text(
+        document_path = ingest_text(
             args.patient,
             extracted.text,
             config.runtime.patient_root,
@@ -156,13 +156,17 @@ def _ingest(config: Config, args: argparse.Namespace) -> None:
         )
         stats = extracted.stats
     else:
-        patient_dir, stats = ingest_patient_file(
+        document_path, stats = ingest_patient_file(
             config,
             args.patient,
             args.file,
             config.runtime.patient_root,
         )
-    print(json.dumps({"patient_dir": str(patient_dir), "extraction": stats}, ensure_ascii=False))
+    print(json.dumps({
+        "patient_dir": str(document_path.parents[1]),
+        "document_path": str(document_path),
+        "extraction": stats,
+    }, ensure_ascii=False))
 
 
 def _deid_preview(config: Config, args: argparse.Namespace) -> None:

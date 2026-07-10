@@ -25,6 +25,7 @@ from konsilium import (
 from konsilium.config import Config
 from konsilium.deid import PiiEntity
 from konsilium.ingest import _ollama_detector, extract_text_with_stats
+from konsilium.memory import PatientMemory
 from konsilium.ollama_deid import OllamaPiiDetector
 
 
@@ -32,7 +33,7 @@ class Stage1Test(unittest.TestCase):
     def test_ingest_keeps_pii_out_of_patient_memory(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            patient_dir = ingest_text(
+            document_path = ingest_text(
                 "case-1",
                 "\n".join(
                     [
@@ -48,7 +49,7 @@ class Stage1Test(unittest.TestCase):
                 allow_synthetic=True,
             )
 
-            patient_text = (patient_dir / "documents.md").read_text(encoding="utf-8")
+            patient_text = document_path.read_text(encoding="utf-8")
             self.assertIn("[PATIENT_1]", patient_text)
             self.assertRegex(patient_text, r"age \d+")
             self.assertNotIn("[DOB_1]", patient_text)
@@ -324,9 +325,9 @@ class Stage1Test(unittest.TestCase):
                 "09.09.2025 18:18:31 [PATIENT_1], Geburtsdatum age 10\nProblem: Kontrolltermin",
                 encoding="utf-8",
             )
-            patient_dir = ingest_from_preview(config, "case-1", preview, structure_model=structure_model)
+            document_path = ingest_from_preview(config, "case-1", preview, structure_model=structure_model)
 
-            self.assertIn("[PATIENT_1]", (patient_dir / "documents.md").read_text(encoding="utf-8"))
+            self.assertIn("[PATIENT_1]", document_path.read_text(encoding="utf-8"))
             vault = json.loads((root / "identity_vault" / "case-1.json").read_text(encoding="utf-8"))
             self.assertEqual(vault, {"[PATIENT_1]": "Maria Beispiel"})
 
@@ -386,28 +387,99 @@ class Stage1Test(unittest.TestCase):
     def test_ingest_appends_documents_and_preserves_existing_tokens(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            ingest_text(
+            first_path = ingest_text(
                 "case-1",
                 "Patient: Anna Mueller\n2026-07-01 HbA1c 8.1",
                 root,
                 allow_synthetic=True,
             )
-            ingest_text(
+            second_path = ingest_text(
                 "case-1",
                 "Patient: Anna Mueller\n2026-07-08 LDL 140",
                 root,
                 allow_synthetic=True,
             )
 
-            patient_text = (root / "patients" / "case-1" / "documents.md").read_text(
-                encoding="utf-8"
-            )
+            patient_text = first_path.read_text(encoding="utf-8") + second_path.read_text(encoding="utf-8")
             self.assertIn("2026-07-01 HbA1c 8.1", patient_text)
             self.assertIn("2026-07-08 LDL 140", patient_text)
             self.assertEqual(patient_text.count("[PATIENT_1]"), 2)
+            self.assertEqual(second_path.stem, first_path.stem + "-2")
 
             vault = json.loads((root / "identity_vault" / "case-1.json").read_text())
             self.assertEqual(vault, {"[PATIENT_1]": "Anna Mueller"})
+
+    def test_ingest_names_document_from_structured_metadata_and_indexes_it(self) -> None:
+        def structure_model(messages, system_prompt):
+            self.assertIn("document_topic", system_prompt)
+            return {
+                "timeline": [],
+                "problems": [],
+                "meds": [],
+                "labs": [],
+                "document_date": "2025-09-10",
+                "document_topic": "EEG Befund",
+                "document_sender": "Wilhelmstift",
+            }
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            document_path = ingest_text(
+                "case-1",
+                "Hamburg, den 10.09.2025\nEEG ohne epilepsietypische Potentiale.",
+                root,
+                structure_model=structure_model,
+                allow_synthetic=True,
+            )
+
+            self.assertEqual(document_path.name, "2025-09-10_EEG-Befund_Wilhelmstift.md")
+            self.assertIn("date_source: document", document_path.read_text(encoding="utf-8"))
+            hits = PatientMemory(root).search("EEG Befund Wilhelmstift", patient_id="case-1")
+            self.assertIn(str(document_path.relative_to(root)), {hit["path"] for hit in hits})
+
+    def test_document_filename_fallbacks_are_safe_and_mark_ingest_date(self) -> None:
+        responses = iter([
+            {
+                "document_date": "",
+                "document_topic": "Ärztlicher Bericht",
+                "document_sender": "Klinikum München",
+            },
+            {
+                "document_date": "2025-09-10",
+                "document_topic": "[PATIENT_1]",
+                "document_sender": "Fallnummer 123456",
+            },
+        ])
+
+        def structure_model(messages, system_prompt):
+            return {"timeline": [], "problems": [], "meds": [], "labs": [], **next(responses)}
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fallback_path = ingest_text(
+                "case-1",
+                "Befund ohne Briefdatum.",
+                root,
+                structure_model=structure_model,
+                allow_synthetic=True,
+            )
+            unsafe_path = ingest_text(
+                "case-1",
+                "Hamburg, den 10.09.2025\nKontrollbefund.",
+                root,
+                structure_model=structure_model,
+                allow_synthetic=True,
+            )
+
+            self.assertEqual(
+                fallback_path.name,
+                f"{date.today().isoformat()}_Aerztlicher-Bericht_Klinikum-Muenchen.md",
+            )
+            self.assertIn("date_source: ingest", fallback_path.read_text(encoding="utf-8"))
+            self.assertEqual(unsafe_path.name, "2025-09-10_document_unknown-sender.md")
+            self.assertNotIn("PATIENT", unsafe_path.name)
+            self.assertNotIn("123456", unsafe_path.name)
+            self.assertEqual(residue_report(unsafe_path.name), [])
 
     def test_ingest_document_uses_pdf_extractor_hook(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -415,7 +487,7 @@ class Stage1Test(unittest.TestCase):
             pdf = root / "synthetic.pdf"
             pdf.write_bytes(b"%PDF synthetic fixture")
 
-            patient_dir = ingest_document(
+            document_path = ingest_document(
                 "case-1",
                 pdf,
                 root,
@@ -423,7 +495,7 @@ class Stage1Test(unittest.TestCase):
                 allow_synthetic=True,
             )
 
-            patient_text = (patient_dir / "documents.md").read_text(encoding="utf-8")
+            patient_text = document_path.read_text(encoding="utf-8")
             self.assertIn("[PATIENT_1]", patient_text)
             self.assertNotIn("Anna Mueller", patient_text)
 
@@ -478,14 +550,14 @@ class Stage1Test(unittest.TestCase):
             def ocr(path: Path, pages: list[int]) -> dict[int, str]:
                 return {1: "Patient: Anna Mueller\nProblem: Diabetes"}
 
-            patient_dir = ingest_document(
+            document_path = ingest_document(
                 "case-1",
                 pdf,
                 root,
                 extractor=lambda path: extract_text_with_stats(path, pdf_reader=reader, ocr_pages=ocr).text,
                 allow_synthetic=True,
             )
-            patient_text = (patient_dir / "documents.md").read_text(encoding="utf-8")
+            patient_text = document_path.read_text(encoding="utf-8")
             self.assertIn("[PATIENT_1]", patient_text)
             self.assertNotIn("Anna Mueller", patient_text)
 
@@ -542,7 +614,7 @@ class Stage1Test(unittest.TestCase):
 
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            patient_dir = ingest_text(
+            document_path = ingest_text(
                 "case-1",
                 "Frau Mueller berichtet über Kopfschmerzen.",
                 root,
@@ -550,7 +622,7 @@ class Stage1Test(unittest.TestCase):
                 structure_model=structure_model,
             )
 
-            patient_text = (patient_dir / "documents.md").read_text(encoding="utf-8")
+            patient_text = document_path.read_text(encoding="utf-8")
             self.assertIn("[PATIENT_1]", patient_text)
             self.assertNotIn("Frau Mueller", patient_text)
 
@@ -596,7 +668,7 @@ class Stage1Test(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             model = FakeStructureModel()
-            patient_dir = ingest_text(
+            document_path = ingest_text(
                 "case-1",
                 "\n".join(
                     [
@@ -611,6 +683,7 @@ class Stage1Test(unittest.TestCase):
                 structure_model=model,
             )
 
+            patient_dir = document_path.parents[1]
             labs = (patient_dir / "labs" / "labs.md").read_text(encoding="utf-8")
             meds = (patient_dir / "meds.md").read_text(encoding="utf-8")
             problems = (patient_dir / "problems.md").read_text(encoding="utf-8")
@@ -670,7 +743,7 @@ class Stage1Test(unittest.TestCase):
             return {"timeline": [], "problems": [], "meds": [], "labs": []}
 
         with TemporaryDirectory() as tmp:
-            patient_dir = ingest_patient_document(
+            document_path = ingest_patient_document(
                 config,
                 "case-1",
                 "Patient: Anna Mueller",
@@ -678,7 +751,7 @@ class Stage1Test(unittest.TestCase):
                 pii_detector=detector,
                 structure_model=empty_structure,
             )
-            patient_text = (patient_dir / "documents.md").read_text(encoding="utf-8")
+            patient_text = document_path.read_text(encoding="utf-8")
             self.assertIn("[PATIENT_1]", patient_text)
             self.assertNotIn("Anna Mueller", patient_text)
 

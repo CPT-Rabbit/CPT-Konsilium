@@ -5,7 +5,9 @@ import json
 import re
 import shutil
 import subprocess
+import unicodedata
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Callable
@@ -24,6 +26,9 @@ _LOG = logging.getLogger(__name__)
 _DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
 _LAB = re.compile(r"\b(HbA1c|LDL|HDL|CRP|TSH|glucose)\b", re.I)
 _MED = re.compile(r"\b(metformin|atorvastatin|insulin|levothyroxine|amlodipine)\b|\b\d+\s*mg\b", re.I)
+_DOCUMENT_DATE = re.compile(r"\b(?:den|vom)\s+(\d{1,2}\.\d{1,2}\.\d{4})\b", re.I)
+_METADATA_TOKEN = re.compile(r"\[[A-Z][A-Z_]*_\d+\]")
+_PERSON_TITLE = re.compile(r"\b(?:Dr\.?|Prof\.?|Frau|Herr)\b", re.I)
 _MIN_PAGE_TEXT_CHARS = 12
 
 
@@ -101,20 +106,19 @@ def _store_deidentified(
         residue_policy,
         retained_institutional_emails=document.retained_institutional_emails,
     )
+    structured = _structure_document(document.text, structure_model=structure_model)
+    metadata = _document_metadata(document.text, structured)
     patient_dir = root / "patients" / patient_id
+    documents_dir = patient_dir / "documents"
     vault_dir = root / "identity_vault"
     vault_path = vault_dir / f"{patient_id}.json"
-    patient_dir.mkdir(parents=True, exist_ok=True)
+    documents_dir.mkdir(parents=True, exist_ok=True)
     vault_dir.mkdir(parents=True, exist_ok=True)
-    documents_path = patient_dir / "documents.md"
-    _append_document(documents_path, document.text)
-    _write_structured_files(
-        patient_dir,
-        documents_path.read_text(encoding="utf-8"),
-        structure_model=structure_model,
-    )
+    document_path = _next_document_path(documents_dir, metadata)
+    _write_document(document_path, document.text, metadata)
+    _write_structured_files(patient_dir, structured)
     (patient_dir / "passport.md").write_text(
-        f"# Patient {patient_id}\n\nDe-identified source documents are in `documents.md`.\n",
+        f"# Patient {patient_id}\n\nDe-identified source documents are in `documents/`.\n",
         encoding="utf-8",
     )
     vault_path.write_text(
@@ -122,7 +126,7 @@ def _store_deidentified(
         encoding="utf-8",
     )
     _sync_memory(root)
-    return patient_dir
+    return document_path
 
 
 def ingest_from_preview(
@@ -203,7 +207,7 @@ def ingest_patient_file(
 ) -> tuple[Path, dict]:
     detector, model = _real_ingest_components(config, pii_detector=pii_detector, structure_model=structure_model)
     extracted = extract_text_with_stats(path, extractor=extractor)
-    patient_dir = ingest_text(
+    document_path = ingest_text(
         patient_id,
         extracted.text,
         root or config.runtime.patient_root,
@@ -211,7 +215,7 @@ def ingest_patient_file(
         structure_model=model,
         residue_policy=config.deidentification.residue,
     )
-    return patient_dir, extracted.stats
+    return document_path, extracted.stats
 
 
 def _real_ingest_components(config, *, pii_detector: PiiDetector | None = None, structure_model=None):
@@ -402,46 +406,46 @@ def _read_vault(path: Path) -> dict[str, str]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _append_document(path: Path, text: str) -> None:
-    clean = text.strip()
-    if not clean:
-        return
-    if path.exists() and path.read_text(encoding="utf-8").strip():
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write("\n\n---\n\n")
-            handle.write(clean + "\n")
-    else:
-        path.write_text(clean + "\n", encoding="utf-8")
-
-
-def _write_structured_files(patient_dir: Path, text: str, *, structure_model=None) -> None:
+def _structure_document(text: str, *, structure_model=None) -> dict:
     structured = _prepass_structure(text)
     if structure_model is not None:
         structured = _merge_structure(structured, _model_structure(text, structured, structure_model))
+    return structured
 
+
+def _write_structured_files(patient_dir: Path, structured: dict) -> None:
     (patient_dir / "timeline").mkdir(exist_ok=True)
     (patient_dir / "labs").mkdir(exist_ok=True)
-    _write_md(patient_dir / "timeline" / "events.md", "Timeline", structured["timeline"])
-    _write_md(patient_dir / "problems.md", "Problems", structured["problems"])
-    _write_md(patient_dir / "meds.md", "Medications", structured["meds"])
-    _write_md(patient_dir / "labs" / "labs.md", "Labs", structured["labs"])
+    for path, title, key in (
+        (patient_dir / "timeline" / "events.md", "Timeline", "timeline"),
+        (patient_dir / "problems.md", "Problems", "problems"),
+        (patient_dir / "meds.md", "Medications", "meds"),
+        (patient_dir / "labs" / "labs.md", "Labs", "labs"),
+    ):
+        _write_md(path, title, _dedupe([*_read_md_items(path), *structured[key]]))
     _write_md(patient_dir / "strategy.md", "Strategy", ["Review changes with a human clinician."])
 
 
-def _prepass_structure(text: str) -> dict[str, list[str]]:
+def _prepass_structure(text: str) -> dict:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     return {
         "timeline": [line for line in lines if _DATE.search(line)],
         "problems": [_after_label(line, "Problem") for line in lines if line.lower().startswith("problem:")],
         "meds": [line for line in lines if _MED.search(line)],
         "labs": [line for line in lines if _LAB.search(line)],
+        "document_date": _body_document_date(text) or "",
+        "document_topic": "",
+        "document_sender": "",
     }
 
 
-def _model_structure(text: str, prepass: dict[str, list[str]], structure_model) -> dict[str, list[str]]:
+def _model_structure(text: str, prepass: dict, structure_model) -> dict:
     system_prompt = (
         "Extract clinical structure from de-identified medical text. "
-        "Return JSON object with array fields: timeline, problems, meds, labs. "
+        "Return JSON object with array fields timeline, problems, meds, labs and string fields "
+        "document_date, document_topic, document_sender. document_date is the letter's own date "
+        "as YYYY-MM-DD; document_topic is a short subject; document_sender is the issuing institution. "
+        "Topic and sender must never be a person. "
         "Do not infer PII and do not restore token values."
     )
     messages = [
@@ -461,21 +465,27 @@ def _model_structure(text: str, prepass: dict[str, list[str]], structure_model) 
     return _coerce_structure(data)
 
 
-def _coerce_structure(data: dict) -> dict[str, list[str]]:
+def _coerce_structure(data: dict) -> dict:
     out = {}
     for key in ("timeline", "problems", "meds", "labs"):
         values = data.get(key, [])
         if not isinstance(values, list):
             raise ValueError(f"structuring model field must be a list: {key}")
         out[key] = [str(item).strip() for item in values if str(item).strip()]
+    for key in ("document_date", "document_topic", "document_sender"):
+        value = data.get(key, "")
+        out[key] = value.strip() if isinstance(value, str) else ""
     return out
 
 
-def _merge_structure(first: dict[str, list[str]], second: dict[str, list[str]]) -> dict[str, list[str]]:
-    return {
+def _merge_structure(first: dict, second: dict) -> dict:
+    merged = {
         key: _dedupe([*first.get(key, []), *second.get(key, [])])
         for key in ("timeline", "problems", "meds", "labs")
     }
+    for key in ("document_date", "document_topic", "document_sender"):
+        merged[key] = second.get(key) or first.get(key) or ""
+    return merged
 
 
 def _dedupe(items: list[str]) -> list[str]:
@@ -491,6 +501,83 @@ def _dedupe(items: list[str]) -> list[str]:
 def _write_md(path: Path, title: str, items: list[str]) -> None:
     body = "\n".join(f"- {item}" for item in items) if items else "- No structured entries yet."
     path.write_text(f"# {title}\n\n{body}\n", encoding="utf-8")
+
+
+def _read_md_items(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    return [
+        line[2:]
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.startswith("- ") and line != "- No structured entries yet."
+    ]
+
+
+def _document_metadata(text: str, structured: dict) -> dict[str, str]:
+    document_date = _iso_date(structured.get("document_date")) or _body_document_date(text)
+    date_source = "document" if document_date else "ingest"
+    document_date = document_date or date.today().isoformat()
+    return {
+        "date": document_date,
+        "date_source": date_source,
+        "topic": _metadata_slug(structured.get("document_topic"), "document"),
+        "sender": _metadata_slug(structured.get("document_sender"), "unknown-sender"),
+    }
+
+
+def _metadata_slug(value, fallback: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return fallback
+    candidate = value.strip()
+    if _METADATA_TOKEN.search(candidate) or _PERSON_TITLE.search(candidate) or residue_report(candidate):
+        return fallback
+    candidate = candidate.translate(str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue", "ß": "ss"}))
+    candidate = unicodedata.normalize("NFKD", candidate).encode("ascii", "ignore").decode("ascii")
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", candidate).strip("-")
+    return slug or fallback
+
+
+def _next_document_path(documents_dir: Path, metadata: dict[str, str]) -> Path:
+    base = f"{metadata['date']}_{metadata['topic']}_{metadata['sender']}"
+    assert_no_blocking_residue(base)
+    path = documents_dir / f"{base}.md"
+    suffix = 2
+    while path.exists():
+        path = documents_dir / f"{base}-{suffix}.md"
+        suffix += 1
+    return path
+
+
+def _write_document(path: Path, text: str, metadata: dict[str, str]) -> None:
+    frontmatter = (
+        "---\n"
+        f"document_date: {metadata['date']}\n"
+        f"date_source: {metadata['date_source']}\n"
+        f"topic: {metadata['topic']}\n"
+        f"sender: {metadata['sender']}\n"
+        "---\n\n"
+    )
+    path.write_text(frontmatter + text.strip() + "\n", encoding="utf-8")
+
+
+def _body_document_date(text: str) -> str | None:
+    match = _DOCUMENT_DATE.search(text)
+    if not match:
+        return None
+    day, month, year = map(int, match.group(1).split("."))
+    try:
+        return date(year, month, day).isoformat()
+    except ValueError:
+        return None
+
+
+def _iso_date(value) -> str | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value.strip()).isoformat()
+    except ValueError:
+        return None
 
 
 def _after_label(line: str, label: str) -> str:

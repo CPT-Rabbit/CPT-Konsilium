@@ -12,7 +12,7 @@ from .review import case_review
 def stage1_smoke(root: str | Path) -> dict:
     root = Path(root)
     patient_id = "synthetic-stage1"
-    patient_dir = ingest_text(
+    document_path = ingest_text(
         patient_id,
         "\n".join(
             [
@@ -27,6 +27,7 @@ def stage1_smoke(root: str | Path) -> dict:
         root,
         allow_synthetic=True,
     )
+    patient_dir = document_path.parents[1]
     patient_text = "\n".join(
         path.read_text(encoding="utf-8")
         for path in patient_dir.rglob("*.md")
@@ -45,6 +46,7 @@ def stage1_smoke(root: str | Path) -> dict:
         "passed": not leaked_values and bool(vault),
         "patient_id": patient_id,
         "patient_dir": str(patient_dir),
+        "document_path": str(document_path),
         "vault_tokens": sorted(vault),
         "leaked_values": leaked_values,
         "case_review": report,

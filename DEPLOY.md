@@ -58,7 +58,7 @@ Host inspection after `--stage1-smoke`:
 
 ```sh
 find "$KONSILIUM_HOME/memory/patients" -maxdepth 3 -type f -print
-sed -n '1,120p' "$KONSILIUM_HOME/memory/patients/synthetic-stage1/documents.md"
+find "$KONSILIUM_HOME/memory/patients/synthetic-stage1/documents" -name '*.md' -maxdepth 1 -print
 ls "$KONSILIUM_HOME/memory/identity_vault"
 ```
 

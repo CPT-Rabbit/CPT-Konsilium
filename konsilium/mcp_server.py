@@ -26,16 +26,21 @@ class KonsiliumOps:
 
         if synthetic:
             extracted = extract_text_with_stats(path)
-            patient_dir = ingest_text(patient_id, extracted.text, self.root, allow_synthetic=True)
+            document_path = ingest_text(patient_id, extracted.text, self.root, allow_synthetic=True)
             stats = extracted.stats
         else:
-            patient_dir, stats = ingest_patient_file(
+            document_path, stats = ingest_patient_file(
                 self.config,
                 patient_id,
                 path,
                 self.root,
             )
-        return {"patient_id": patient_id, "patient_dir": str(patient_dir), "extraction": stats}
+        return {
+            "patient_id": patient_id,
+            "patient_dir": str(document_path.parents[1]),
+            "document_path": str(document_path),
+            "extraction": stats,
+        }
 
     def deid_preview(self, path: str) -> dict:
         from .ingest import deid_preview

@@ -242,7 +242,10 @@ def _patient_memory(patient_dir: Path, patient_id: str, query: str) -> dict[str,
 
 def _patient_evidence(patient_dir: Path) -> list[dict]:
     refs = []
-    for name in ("documents.md", "timeline/events.md", "problems.md", "meds.md", "labs/labs.md"):
+    for path in sorted((patient_dir / "documents").glob("*.md")):
+        name = str(path.relative_to(patient_dir))
+        refs.append({"source": f"patient_memory:{name}", "url": str(path)})
+    for name in ("timeline/events.md", "problems.md", "meds.md", "labs/labs.md"):
         path = patient_dir / name
         if path.exists():
             refs.append({"source": f"patient_memory:{name}", "url": str(path)})

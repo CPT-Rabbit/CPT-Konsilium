@@ -85,7 +85,8 @@ class CliTest(unittest.TestCase):
             self.assertIn("Chair synthesis", review_out)
             self.assertIn("Anna Mueller", rendered)
             self.assertIn("report=", monitor_out)
-            self.assertIn("documents.md", memory_out)
+            self.assertIn("/documents/", memory_out)
+            self.assertTrue(Path(json.loads(ingest_out)["document_path"]).is_file())
             self.assertNotIn("Anna Mueller", memory_out)
 
 
