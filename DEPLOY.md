@@ -80,6 +80,20 @@ structuring or calls a reasoning provider. Residue hits are reported only as
 pattern names and line numbers; real ingest remains blocked until they are
 resolved.
 
+For OCR residue that cannot be repaired automatically, edit the generated
+`preview-*.md` locally, remove every flagged value, then ingest that reviewed
+file:
+
+```sh
+docker compose -f docker-compose.mac.yml run --rm konsilium \
+  --config /config/config.yaml ingest --patient case-1 \
+  --from-preview /memory/previews/preview-befund.md
+```
+
+The command accepts only files under `memory/previews/`, loads the neighboring
+`.vault.json`, and runs the residue gate again before structuring or memory
+writes. There is no flag that bypasses the gate.
+
 Synthetic operator flow:
 
 ```sh

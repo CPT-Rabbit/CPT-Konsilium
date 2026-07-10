@@ -66,6 +66,13 @@
 - Institutional email retention is an explicit de-ID decision passed to the residue gate; the gate blocks every other remaining email and does not run its own institutional heuristic.
 - Compact physician names remain PERSON data; public institutional footer identifiers such as Ust-ID remain plain context.
 
+## 2026-07-10 - Reviewed Preview Ingest
+
+- DOB lines containing a patient token followed by an unpunctuated bare word block as partial-name residue.
+- Only generic institutional mailboxes may remain plain; person-named mailboxes are tokenized even on institutional domains.
+- OCR-spaced postal codes follow the same private/institutional context policy as ordinary postal codes.
+- `ingest --from-preview` is the only operator override for OCR residue: it accepts a locally edited `previews/preview-*.md`, reloads its preview vault, and must pass the full residue gate before any patient-memory write.
+
 ## 2026-07-09 - Public Snapshot Hygiene
 
 - Public releases are sanitized working-tree snapshots, not private history pushes.

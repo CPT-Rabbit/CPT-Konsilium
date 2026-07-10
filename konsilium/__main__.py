@@ -20,7 +20,9 @@ def main(argv: list[str] | None = None) -> None:
 
     ingest = subparsers.add_parser("ingest", help="ingest a patient document")
     ingest.add_argument("--patient", required=True)
-    ingest.add_argument("--file", required=True)
+    ingest_source = ingest.add_mutually_exclusive_group(required=True)
+    ingest_source.add_argument("--file")
+    ingest_source.add_argument("--from-preview")
     ingest.add_argument("--synthetic", action="store_true", help="explicit synthetic/test ingest")
 
     preview = subparsers.add_parser("deid-preview", help="write a local de-identification preview without ingesting")
@@ -132,9 +134,19 @@ def _knowledge_smoke(query: str) -> None:
 
 
 def _ingest(config: Config, args: argparse.Namespace) -> None:
-    from .ingest import extract_text_with_stats, ingest_patient_file, ingest_text
+    from .ingest import extract_text_with_stats, ingest_from_preview, ingest_patient_file, ingest_text
 
-    if args.synthetic:
+    if args.from_preview:
+        if args.synthetic:
+            raise ValueError("--synthetic cannot be combined with --from-preview")
+        patient_dir = ingest_from_preview(
+            config,
+            args.patient,
+            args.from_preview,
+            config.runtime.patient_root,
+        )
+        stats = {"kind": "reviewed_preview"}
+    elif args.synthetic:
         extracted = extract_text_with_stats(args.file)
         patient_dir = ingest_text(
             args.patient,

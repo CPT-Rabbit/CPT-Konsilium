@@ -33,6 +33,7 @@ DEFAULT_RESIDUE_POLICY = {
     "CASE_NUMBER": "block",
     "DOB_MARKER": "block",
     "EMAIL": "block",
+    "PARTIAL_NAME": "block",
 }
 
 _MIN_ENTITY_CHARS = 3
@@ -41,6 +42,9 @@ _STREET_SUFFIXES = r"straße|strasse|str\.?|weg|allee|platz|damm|ring|gasse|stie
 _GERMAN_MONTHS = {
     "januar": 1, "februar": 2, "märz": 3, "maerz": 3, "april": 4, "mai": 5, "juni": 6,
     "juli": 7, "august": 8, "september": 9, "oktober": 10, "november": 11, "dezember": 12,
+}
+_GENERIC_INSTITUTION_EMAIL_LOCAL_PARTS = {
+    "info", "kontakt", "praxis", "zentrum", "office", "sekretariat", "verwaltung", "spz", "empfang",
 }
 
 
@@ -84,7 +88,12 @@ _FIELD_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("PATIENT", re.compile(r"\bSeite\s+\d+\s+von\s+\d+\s*,\s*([A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]+)\s*,", re.I)),
     (
         "PATIENT",
-        re.compile(r"\b((?:(?:Frau|Herr)\s+)?Dr\.?\s*(?:med\.?\s*)?[A-ZÄÖÜ][.\w-]*[a-zäöüß])\b"),
+        re.compile(
+            r"\b((?:(?:Frau|Herr)[ \t]+)?Dr\.?[ \t]*(?:med\.?[ \t]*)?"
+            r"[A-ZÄÖÜ][.\w-]*[a-zäöüß]"
+            r"(?:[ \t]+(?!(?:Geburtsdatum|Geboren|Patient(?:in)?|Fallnummer)\b)"
+            r"[A-ZÄÖÜ][\w-]*[a-zäöüß])*)\b"
+        ),
     ),
     ("ADDR", re.compile(r"\b(?:Address|Adresse|wh\.?|wohnhaft(?:\s+in)?):?\s*([^\n]+)", re.I)),
     (
@@ -106,15 +115,15 @@ _FIELD_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "ADDR",
         re.compile(
-            r"\b((?:[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*\s+){0,3}"
-            rf"[A-Za-zÄÖÜäöüß.-]*(?:{_STREET_SUFFIXES})\s+\d{{1,5}}[A-Za-z]?)\b",
+            r"\b((?:[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*[ \t]+){0,3}"
+            rf"[A-Za-zÄÖÜäöüß.-]*(?:{_STREET_SUFFIXES})[ \t]+\d{{1,5}}[A-Za-z]?)\b",
             re.I,
         ),
     ),
-    ("ADDR", re.compile(r"\b(\d{5}\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*){0,3})\b")),
+    ("ADDR", re.compile(r"\b(\d{2}\s?\d{3}\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*){0,3})\b")),
     (
         "EMAIL",
-        re.compile(r"(?<!\w)(\w[\w.%+-]*@[\w-]+[\w .-]*\.?\s?(?:de|com|org|net|eu))(?!\w)", re.I),
+        re.compile(r"(?<!\w)([.\w][\w.%+-]*@[\w-]+[\w .-]*\.?\s?(?:de|com|org|net|eu))(?!\w)", re.I),
     ),
     ("EMAIL", re.compile(r"\b([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\b", re.I)),
     (
@@ -148,11 +157,11 @@ _RESIDUE_PATTERNS: dict[str, re.Pattern[str]] = {
         re.I,
     ),
     "STREET": re.compile(
-        r"\b(?:[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*\s+){0,3}"
-        rf"[A-Za-zÄÖÜäöüß.-]*(?:{_STREET_SUFFIXES})\s+\d{{1,5}}[A-Za-z]?\b",
+        r"\b(?:[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*[ \t]+){0,3}"
+        rf"[A-Za-zÄÖÜäöüß.-]*(?:{_STREET_SUFFIXES})[ \t]+\d{{1,5}}[A-Za-z]?\b",
         re.I,
     ),
-    "PLZ_CITY": re.compile(r"\b\d{5}\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*){0,3}\b"),
+    "PLZ_CITY": re.compile(r"\b\d{2}\s?\d{3}\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*){0,3}\b"),
     "PHONE": re.compile(r"\b(?:Tel(?:efon)?|Fax)\.?\s*:?\s*\+?[0-9][0-9 ()/-]{5,}[0-9]", re.I),
     "EMAIL": re.compile(r"(?<=\w)@(?=\w)"),
     "DIGIT_RUN": re.compile(r"(?<!\d)\d{6,}(?!\d)"),
@@ -169,12 +178,13 @@ _INSTITUTION_MARKERS = re.compile(
     re.I,
 )
 _PRIVATE_ADDRESS_MARKERS = re.compile(
-    r"\b(?:geb\s*\.?|geboren(?:\s+am)?|wh\.?|wohnhaft|patient(?:in)?\s*:|name\s*:)",
+    r"\b(?:geb\s*\.?|geboren(?:\s+am)?|wh\.?|wohnhaft|nachrichtlich|empfänger|patient(?:in)?\s*:|name\s*:)",
     re.I,
 )
 _CONTACT_MARKER = re.compile(r"\b(?:Tel(?:efon)?|Fax)\.?\s*:?", re.I)
 _INSTITUTION_NUMBER_MARKER = re.compile(r"\b(?:Ust-?ID|IK-?Nr|IBAN)\b", re.I)
 _DOB_MARKER = re.compile(r"\b(?:Geburtsdatum\b|geb\s*\.?)", re.I)
+_PARTIAL_NAME = re.compile(r"\[PATIENT_\d+\]\s+\w{3,}")
 
 
 def deidentify(
@@ -229,14 +239,15 @@ def residue_report(
     retained_institutional_emails: tuple[str, ...] = (),
 ) -> list[ResidueHit]:
     configured = {**DEFAULT_RESIDUE_POLICY, **{str(key).upper(): str(value).lower() for key, value in (policy or {}).items()}}
+    for name, action in configured.items():
+        if action not in {"block", "report", "ignore"}:
+            raise ValueError(f"invalid residue action for {name}: {action}")
     hits = []
     offset = 0
     for line_number, raw_line in enumerate(text.splitlines(keepends=True), 1):
         line = raw_line.rstrip("\r\n")
         for name, pattern in _RESIDUE_PATTERNS.items():
             action = configured.get(name, "block")
-            if action not in {"block", "report", "ignore"}:
-                raise ValueError(f"invalid residue action for {name}: {action}")
             matches = list(pattern.finditer(line))
             if action != "ignore" and matches and not _allowed_residue(
                 name, text, offset, matches, retained_institutional_emails
@@ -246,6 +257,9 @@ def residue_report(
         marker_action = configured["DOB_MARKER"]
         if marker_action != "ignore" and marker and not re.search(r"\bage\s+\d+\b", line[marker.end():marker.end() + 24], re.I):
             hits.append(ResidueHit(line_number, "DOB_MARKER", marker_action))
+        partial_action = configured["PARTIAL_NAME"]
+        if partial_action != "ignore" and marker and _PARTIAL_NAME.search(line):
+            hits.append(ResidueHit(line_number, "PARTIAL_NAME", partial_action))
         offset += len(raw_line)
     if text.count("[") != text.count("]") and configured["CORRUPTED_TOKEN"] != "ignore":
         hits.append(ResidueHit(1, "CORRUPTED_TOKEN", configured["CORRUPTED_TOKEN"]))
@@ -267,7 +281,7 @@ def assert_no_blocking_residue(
 
 def _replace_match(match: re.Match[str], kind: str, token, today: date, retained_emails: set[str]) -> str:
     value = match.group(1).strip()
-    if kind in {"ADDR", "PHONE", "EMAIL"} and _is_institutional_address(match.string, match.start(1)):
+    if _retain_institutional_value(kind, value, match.string, match.start(1)):
         if kind == "EMAIL":
             retained_emails.add(value)
         return match.group(0)
@@ -303,7 +317,7 @@ def _replace_entity_segment(
 ) -> str:
     def replace(match: re.Match[str]) -> str:
         position = offset + match.start()
-        if kind in {"ADDR", "PHONE", "EMAIL"} and _is_institutional_address(text, position):
+        if _retain_institutional_value(kind, value, text, position):
             if kind == "EMAIL":
                 retained_emails.add(value)
             return match.group(0)
@@ -316,11 +330,29 @@ def _valid_entity_value(value: str) -> bool:
     return len(re.sub(r"\W", "", value or "")) >= _MIN_ENTITY_CHARS
 
 
+def institutional_email_allowlist(text: str) -> tuple[str, ...]:
+    pattern = re.compile(r"(?<!\w)([.\w][\w.%+-]*@[\w-]+[\w .-]*\.?\s?(?:de|com|org|net|eu))(?!\w)", re.I)
+    return tuple(sorted({
+        match.group(1).strip()
+        for match in pattern.finditer(text)
+        if _retain_institutional_value("EMAIL", match.group(1).strip(), text, match.start(1))
+    }))
+
+
+def _retain_institutional_value(kind: str, value: str, text: str, position: int) -> bool:
+    if kind not in {"ADDR", "PHONE", "EMAIL"} or not _is_institutional_address(text, position):
+        return False
+    if kind != "EMAIL":
+        return True
+    local_part = value.lstrip(".").split("@", 1)[0].lower()
+    return local_part in _GENERIC_INSTITUTION_EMAIL_LOCAL_PARTS
+
+
 def _is_institutional_address(text: str, position: int) -> bool:
     lines = text.splitlines()
     line_index = text[:position].count("\n")
     context = "\n".join(lines[max(0, line_index - 4):line_index + 5])
-    if _PRIVATE_ADDRESS_MARKERS.search(context):
+    if _PRIVATE_ADDRESS_MARKERS.search(context) or re.search(r"\[PATIENT_\d+\]", _line_at(text, position)):
         return False
     return bool(_INSTITUTION_MARKERS.search(context))
 
@@ -356,7 +388,7 @@ def _line_at(text: str, position: int) -> str:
 
 def _email_at(text: str, position: int) -> str:
     line = _line_at(text, position)
-    match = re.search(r"\w[\w.%+-]*@[\w-]+[\w .-]*\.?\s?(?:de|com|org|net|eu)", line, re.I)
+    match = re.search(r"[.\w][\w.%+-]*@[\w-]+[\w .-]*\.?\s?(?:de|com|org|net|eu)", line, re.I)
     return match.group(0).strip() if match else ""
 
 

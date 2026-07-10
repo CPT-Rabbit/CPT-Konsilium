@@ -10,7 +10,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Callable
 
-from .deid import PiiDetector, assert_no_blocking_residue, deidentify, residue_report
+from .deid import (
+    DeidentifiedDocument,
+    PiiDetector,
+    assert_no_blocking_residue,
+    deidentify,
+    institutional_email_allowlist,
+    residue_report,
+)
 from .util import json_block
 
 _LOG = logging.getLogger(__name__)
@@ -69,17 +76,34 @@ def ingest_text(
         raise RuntimeError("ingest requires a configured structuring model; pass allow_synthetic=True only for tests")
     root = Path(root)
     safe_patient_id = _safe_id(patient_id)
-    patient_dir = root / "patients" / safe_patient_id
-    vault_dir = root / "identity_vault"
-
-    vault_path = vault_dir / f"{safe_patient_id}.json"
+    vault_path = root / "identity_vault" / f"{safe_patient_id}.json"
     existing_vault = _read_vault(vault_path)
     document = deidentify(text, existing_vault=existing_vault, pii_detector=pii_detector)
+    return _store_deidentified(
+        safe_patient_id,
+        document,
+        root,
+        structure_model=structure_model,
+        residue_policy=residue_policy,
+    )
+
+
+def _store_deidentified(
+    patient_id: str,
+    document: DeidentifiedDocument,
+    root: Path,
+    *,
+    structure_model=None,
+    residue_policy: dict[str, str] | None = None,
+) -> Path:
     assert_no_blocking_residue(
         document.text,
         residue_policy,
         retained_institutional_emails=document.retained_institutional_emails,
     )
+    patient_dir = root / "patients" / patient_id
+    vault_dir = root / "identity_vault"
+    vault_path = vault_dir / f"{patient_id}.json"
     patient_dir.mkdir(parents=True, exist_ok=True)
     vault_dir.mkdir(parents=True, exist_ok=True)
     documents_path = patient_dir / "documents.md"
@@ -90,7 +114,7 @@ def ingest_text(
         structure_model=structure_model,
     )
     (patient_dir / "passport.md").write_text(
-        f"# Patient {safe_patient_id}\n\nDe-identified source documents are in `documents.md`.\n",
+        f"# Patient {patient_id}\n\nDe-identified source documents are in `documents.md`.\n",
         encoding="utf-8",
     )
     vault_path.write_text(
@@ -99,6 +123,52 @@ def ingest_text(
     )
     _sync_memory(root)
     return patient_dir
+
+
+def ingest_from_preview(
+    config,
+    patient_id: str,
+    preview_path: str | Path,
+    root: str | Path | None = None,
+    *,
+    structure_model=None,
+) -> Path:
+    if not config.runtime.allow_real_patient_docs:
+        raise RuntimeError("reviewed-preview ingest is disabled by runtime.allow_real_patient_docs")
+    root = Path(root or config.runtime.patient_root)
+    preview = Path(preview_path).resolve()
+    previews_root = (root / "previews").resolve()
+    if preview.parent != previews_root or not preview.name.startswith("preview-") or preview.suffix != ".md":
+        raise ValueError("--from-preview requires memory/previews/preview-*.md")
+    vault_path = preview.with_suffix(".vault.json")
+    if not vault_path.exists():
+        raise RuntimeError(f"reviewed preview vault is missing: {vault_path.name}")
+    text = preview.read_text(encoding="utf-8")
+    if not text.strip():
+        raise RuntimeError("reviewed preview is empty")
+    preview_vault = _read_vault(vault_path)
+    if not isinstance(preview_vault, dict) or any(
+        not re.fullmatch(r"\[[A-Z][A-Z_]*_\d+\]", key) or not isinstance(value, str)
+        for key, value in preview_vault.items()
+    ):
+        raise RuntimeError("reviewed preview vault has invalid token mappings")
+    safe_patient_id = _safe_id(patient_id)
+    existing_vault = _read_vault(root / "identity_vault" / f"{safe_patient_id}.json")
+    conflicts = [key for key, value in preview_vault.items() if key in existing_vault and existing_vault[key] != value]
+    if conflicts:
+        raise RuntimeError(f"reviewed preview vault conflicts with existing patient tokens: {', '.join(conflicts)}")
+    document = DeidentifiedDocument(
+        text=text,
+        vault={**existing_vault, **preview_vault},
+        retained_institutional_emails=institutional_email_allowlist(text),
+    )
+    return _store_deidentified(
+        safe_patient_id,
+        document,
+        root,
+        structure_model=structure_model or _structure_model(config),
+        residue_policy=config.deidentification.residue,
+    )
 
 
 def ingest_patient_document(

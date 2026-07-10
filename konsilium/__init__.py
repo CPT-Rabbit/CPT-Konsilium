@@ -2,7 +2,7 @@
 
 from .deid import DeidentifiedDocument, PiiEntity, ResidueError, deidentify, residue_report
 from .egress import EgressViolation, assert_safe_knowledge_query
-from .ingest import deid_preview, ingest_document, ingest_patient_document, ingest_patient_file, ingest_text
+from .ingest import deid_preview, ingest_document, ingest_from_preview, ingest_patient_document, ingest_patient_file, ingest_text
 from .knowledge import guidelines_lookup, pubmed_search, semanticscholar_search
 from .letters import doctor_letter, render_doctor_letter
 from .monitor import monitor_review
@@ -23,6 +23,7 @@ __all__ = [
     "doctor_letter",
     "guidelines_lookup",
     "ingest_document",
+    "ingest_from_preview",
     "ingest_patient_document",
     "ingest_patient_file",
     "ingest_text",

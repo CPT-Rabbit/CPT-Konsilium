@@ -27,6 +27,7 @@ deidentification:
     DOB: block
     DOB_MARKER: block
     PERSON_HEADER: block
+    PARTIAL_NAME: block
     STREET: block
     PLZ_CITY: block
     PHONE: block

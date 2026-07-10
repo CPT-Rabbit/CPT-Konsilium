@@ -14,6 +14,7 @@ from konsilium import (
     deidentify,
     deid_preview,
     ingest_document,
+    ingest_from_preview,
     ingest_patient_file,
     ingest_patient_document,
     ingest_text,
@@ -237,6 +238,61 @@ class Stage1Test(unittest.TestCase):
             },
         )
         self.assertIn("EMAIL", {hit.pattern for hit in residue_report("raw@mail.de")})
+
+        named = deidentify("Klinik Musterstadt\n.pferner@aktion-sennenschein-greifswald de")
+        self.assertNotIn(".pferner@aktion-sennenschein-greifswald de", named.text)
+        self.assertEqual(named.retained_institutional_emails, ())
+
+    def test_partial_name_next_to_patient_token_on_dob_line_blocks(self) -> None:
+        leaked = "09.09.2025 18:18:31 [PATIENT_1] 3arosiav, Geburtsdatum age 10"
+
+        self.assertIn("PARTIAL_NAME", {hit.pattern for hit in residue_report(leaked)})
+        self.assertNotIn(
+            "PARTIAL_NAME",
+            {hit.pattern for hit in residue_report("[PATIENT_5] wurde heute untersucht")},
+        )
+
+    def test_ocr_spaced_private_plz_is_tokenized_and_gated(self) -> None:
+        source = "nachrichtlich: [PATIENT_3], [ADDR_2], 18 528 Bergen"
+        document = deidentify(source)
+
+        self.assertNotIn("18 528 Bergen", document.text)
+        self.assertIn("PLZ_CITY", {hit.pattern for hit in residue_report(source)})
+
+    def test_reviewed_preview_ingest_requires_clean_gate_and_uses_preview_vault(self) -> None:
+        def structure_model(messages, system_prompt):
+            return {"timeline": [], "problems": ["Kontrolltermin"], "meds": [], "labs": []}
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            previews = root / "previews"
+            previews.mkdir()
+            preview = previews / "preview-ocr.md"
+            preview.write_text(
+                "09.09.2025 18:18:31 [PATIENT_1] 3arosiav, Geburtsdatum age 10\nProblem: Kontrolltermin",
+                encoding="utf-8",
+            )
+            preview.with_suffix(".vault.json").write_text(
+                json.dumps({"[PATIENT_1]": "Maria Beispiel"}),
+                encoding="utf-8",
+            )
+            config = Config.model_validate({
+                "runtime": {"patient_root": root, "allow_real_patient_docs": True},
+            })
+
+            with self.assertRaisesRegex(ResidueError, "PARTIAL_NAME lines 1"):
+                ingest_from_preview(config, "case-1", preview, structure_model=structure_model)
+            self.assertFalse((root / "patients").exists())
+
+            preview.write_text(
+                "09.09.2025 18:18:31 [PATIENT_1], Geburtsdatum age 10\nProblem: Kontrolltermin",
+                encoding="utf-8",
+            )
+            patient_dir = ingest_from_preview(config, "case-1", preview, structure_model=structure_model)
+
+            self.assertIn("[PATIENT_1]", (patient_dir / "documents.md").read_text(encoding="utf-8"))
+            vault = json.loads((root / "identity_vault" / "case-1.json").read_text(encoding="utf-8"))
+            self.assertEqual(vault, {"[PATIENT_1]": "Maria Beispiel"})
 
     def test_institutional_ust_id_does_not_trigger_digit_residue(self) -> None:
         text = "Klinik Musterstadt\nUst-ID Nr. DE252426446"

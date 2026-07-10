@@ -136,6 +136,7 @@ konsilium() { docker run --rm -i \
 
 konsilium ingest --patient case-1 --file /memory/inbox/befund.pdf
 konsilium deid-preview --file /memory/inbox/befund.pdf
+konsilium ingest --patient case-1 --from-preview /memory/previews/preview-befund.md
 konsilium review --patient case-1 --roles internist,endocrinologist \
   --question "What should the next appointment clarify?"
 konsilium letter --patient case-1
