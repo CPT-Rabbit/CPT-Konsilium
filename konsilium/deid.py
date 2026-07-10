@@ -37,7 +37,7 @@ DEFAULT_RESIDUE_POLICY = {
 }
 
 _MIN_ENTITY_CHARS = 3
-_TOKEN_SPAN = re.compile(r"\[[A-Z][A-Z_]*_\d+\]")
+_PROTECTED_SPAN = re.compile(r"\[[A-Z][A-Z_]*_\d+\]|\bage\s+\d{1,3}\b", re.I)
 _STREET_SUFFIXES = r"straße|strasse|str\.?|weg|allee|platz|damm|ring|gasse|stieg|twiete|kamp|redder|chaussee|deich|brook|horst|wall|steig"
 _GERMAN_MONTHS = {
     "januar": 1, "februar": 2, "märz": 3, "maerz": 3, "april": 4, "mai": 5, "juni": 6,
@@ -188,7 +188,6 @@ _PARTIAL_NAME = re.compile(
     r"\[PATIENT_\d+\]\s+(?!(?:geb|geboren|Geburtsdatum|age)\b)\w{3,}",
     re.I,
 )
-_DEIDENTIFIED_AGE = re.compile(r"(?:age\s+)?\d{1,3}", re.I)
 
 
 def deidentify(
@@ -222,12 +221,7 @@ def deidentify(
         entities = [
             (_normal_kind(entity.kind), entity.value.strip())
             for entity in pii_detector(clean)
-            if _normal_kind(entity.kind)
-            and _valid_entity_value(entity.value)
-            and not (
-                _normal_kind(entity.kind) == "DOB"
-                and _DEIDENTIFIED_AGE.fullmatch(entity.value.strip())
-            )
+            if _normal_kind(entity.kind) and _valid_entity_value(entity.value)
         ]
         for kind, value in sorted(entities, key=lambda item: len(item[1]), reverse=True):
             clean = _replace_entity(clean, kind, value, token, retained_emails)
@@ -309,7 +303,7 @@ def _replace_entity(text: str, kind: str, value: str, token, retained_emails: se
     pattern = re.compile(rf"(?<!\w){re.escape(value)}(?!\w)")
     parts = []
     start = 0
-    for protected in _TOKEN_SPAN.finditer(text):
+    for protected in _PROTECTED_SPAN.finditer(text):
         parts.append(_replace_entity_segment(text[start:protected.start()], pattern, kind, value, token, text, start, retained_emails))
         parts.append(protected.group(0))
         start = protected.end()

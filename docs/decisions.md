@@ -70,6 +70,7 @@
 
 - DOB lines containing a patient token followed by an unpunctuated bare word block as partial-name residue.
 - DOB marker words and an existing `age N` are excluded from partial-name residue detection.
+- Deterministic `age N` replacements are protected spans; the subsequent detector pass cannot replace any part of them.
 - Parseable DOB values render only as `age N`; OCR-garbled spelled dates are tokenized and remain blocked for operator review when no age can be derived.
 - Only generic institutional mailboxes may remain plain; person-named mailboxes are tokenized even on institutional domains.
 - OCR-spaced postal codes follow the same private/institutional context policy as ordinary postal codes.

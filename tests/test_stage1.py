@@ -200,19 +200,26 @@ class Stage1Test(unittest.TestCase):
         )
 
     def test_dob_marker_gate_catches_garbled_formats_and_accepts_split_years(self) -> None:
-        header = "Seite 2 von 4, [PATIENT_1], [PATIENT_12] geb. am 19.07.201 5"
+        header = "Seite 2 von 4, Mustermann, Erika geb. am 19.07.201 5, F1234567 ..."
 
         def detector(text):
-            self.assertIn("geb. am age 10", text)
-            return [PiiEntity("DOB", "age 10")]
+            self.assertEqual(
+                text,
+                "Seite 2 von 4, [PATIENT_1], Erika geb. am age 10, F1234567 ...",
+            )
+            return [
+                PiiEntity("DOB", "10, F1234567"),
+                PiiEntity("PERSON", "Erika"),
+                PiiEntity("INSURANCE", "F1234567"),
+            ]
 
         document = deidentify(
-            f"{header}\ngeb. am 19.07,201 5",
+            header,
             pii_detector=detector,
             today=date(2026, 7, 10),
         )
 
-        self.assertEqual(document.text.count("age "), 2)
+        self.assertIn("[PATIENT_1], [PATIENT_2] geb. am age 10, [INSURANCE_1]", document.text)
         self.assertNotIn("age [DOB_", document.text)
         self.assertNotIn("[DOB_", document.text)
         self.assertIn("19.07.201 5", document.vault.values())
