@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -199,13 +200,29 @@ class Stage1Test(unittest.TestCase):
         )
 
     def test_dob_marker_gate_catches_garbled_formats_and_accepts_split_years(self) -> None:
-        document = deidentify("geb. am 19.07.201 5\ngeb. am 19.07,201 5")
+        header = "Seite 2 von 4, [PATIENT_1], [PATIENT_12] geb. am 19.07.201 5"
+
+        def detector(text):
+            self.assertIn("geb. am age 10", text)
+            return [PiiEntity("DOB", "age 10")]
+
+        document = deidentify(
+            f"{header}\ngeb. am 19.07,201 5",
+            pii_detector=detector,
+            today=date(2026, 7, 10),
+        )
 
         self.assertEqual(document.text.count("age "), 2)
+        self.assertNotIn("age [DOB_", document.text)
+        self.assertNotIn("[DOB_", document.text)
+        self.assertIn("19.07.201 5", document.vault.values())
         self.assertNotIn("DOB_MARKER", {hit.pattern for hit in residue_report(document.text)})
+        self.assertNotIn("PARTIAL_NAME", {hit.pattern for hit in residue_report(document.text)})
 
         garbled = deidentify("Frau Dr. B.Püst Geburtsdatum Sonntag, 19. JuËI 2015")
         self.assertNotIn("Dr. B.Püst", garbled.text)
+        self.assertNotIn("Sonntag, 19. JuËI 2015", garbled.text)
+        self.assertIn("[DOB_", garbled.text)
         self.assertIn("DOB_MARKER", {hit.pattern for hit in residue_report(garbled.text)})
 
         with TemporaryDirectory() as tmp:
@@ -245,8 +262,10 @@ class Stage1Test(unittest.TestCase):
 
     def test_partial_name_next_to_patient_token_on_dob_line_blocks(self) -> None:
         leaked = "09.09.2025 18:18:31 [PATIENT_1] 3arosiav, Geburtsdatum age 10"
+        tokenized_header = "Seite 2 von 4, [PATIENT_1], [PATIENT_12] geb. am age 10"
 
         self.assertIn("PARTIAL_NAME", {hit.pattern for hit in residue_report(leaked)})
+        self.assertNotIn("PARTIAL_NAME", {hit.pattern for hit in residue_report(tokenized_header)})
         self.assertNotIn(
             "PARTIAL_NAME",
             {hit.pattern for hit in residue_report("[PATIENT_5] wurde heute untersucht")},

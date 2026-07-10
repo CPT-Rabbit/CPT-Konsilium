@@ -69,6 +69,8 @@
 ## 2026-07-10 - Reviewed Preview Ingest
 
 - DOB lines containing a patient token followed by an unpunctuated bare word block as partial-name residue.
+- DOB marker words and an existing `age N` are excluded from partial-name residue detection.
+- Parseable DOB values render only as `age N`; OCR-garbled spelled dates are tokenized and remain blocked for operator review when no age can be derived.
 - Only generic institutional mailboxes may remain plain; person-named mailboxes are tokenized even on institutional domains.
 - OCR-spaced postal codes follow the same private/institutional context policy as ordinary postal codes.
 - `ingest --from-preview` is the only operator override for OCR residue: it accepts a locally edited `previews/preview-*.md`, reloads its preview vault, and must pass the full residue gate before any patient-memory write.

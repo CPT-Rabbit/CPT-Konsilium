@@ -80,7 +80,7 @@ _FIELD_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(
             r"\b(?:Geburtsdatum|Geboren(?:\s+am)?|geb\s*\.?)\s*:?(?:\s+am)?[ \t]*"
             r"((?:(?:Montag|Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag),?\s+)?"
-            r"[0-9]{1,2}\.\s*(?:Januar|Februar|März|Maerz|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)\s+\d{4})",
+            r"[0-9]{1,2}\.\s*\S{2,16}\s+\d{4})",
             re.I,
         ),
     ),
@@ -184,7 +184,11 @@ _PRIVATE_ADDRESS_MARKERS = re.compile(
 _CONTACT_MARKER = re.compile(r"\b(?:Tel(?:efon)?|Fax)\.?\s*:?", re.I)
 _INSTITUTION_NUMBER_MARKER = re.compile(r"\b(?:Ust-?ID|IK-?Nr|IBAN)\b", re.I)
 _DOB_MARKER = re.compile(r"\b(?:Geburtsdatum\b|geb\s*\.?)", re.I)
-_PARTIAL_NAME = re.compile(r"\[PATIENT_\d+\]\s+\w{3,}")
+_PARTIAL_NAME = re.compile(
+    r"\[PATIENT_\d+\]\s+(?!(?:geb|geboren|Geburtsdatum|age)\b)\w{3,}",
+    re.I,
+)
+_DEIDENTIFIED_AGE = re.compile(r"(?:age\s+)?\d{1,3}", re.I)
 
 
 def deidentify(
@@ -218,7 +222,12 @@ def deidentify(
         entities = [
             (_normal_kind(entity.kind), entity.value.strip())
             for entity in pii_detector(clean)
-            if _normal_kind(entity.kind) and _valid_entity_value(entity.value)
+            if _normal_kind(entity.kind)
+            and _valid_entity_value(entity.value)
+            and not (
+                _normal_kind(entity.kind) == "DOB"
+                and _DEIDENTIFIED_AGE.fullmatch(entity.value.strip())
+            )
         ]
         for kind, value in sorted(entities, key=lambda item: len(item[1]), reverse=True):
             clean = _replace_entity(clean, kind, value, token, retained_emails)
@@ -286,8 +295,11 @@ def _replace_match(match: re.Match[str], kind: str, token, today: date, retained
             retained_emails.add(value)
         return match.group(0)
     if kind == "DOB":
-        token(kind, value)
-        replacement = f"age {_age(value, today)}"
+        dob_token = token(kind, value)
+        try:
+            replacement = f"age {_age(value, today)}"
+        except (IndexError, ValueError):
+            replacement = dob_token
     else:
         replacement = token(kind, value)
     return match.group(0).replace(match.group(1), replacement)
