@@ -62,6 +62,22 @@ _ADDRESS_KINSHIP = re.compile(
     r"\b(?:Geschwisterkind|Geschwister|Kind|Mutter|Vater|Eltern|Bruder|Schwester|Sohn|Tochter)\w*\b",
     re.I,
 )
+_INSTITUTION_ENTITY = re.compile(
+    r"\b(?:Krankenhaus|Kinderkrankenhaus|Klinik|Klinikum|Zentrum|Stift|Praxis|Universität|"
+    r"Universitaet|gGmbH|GmbH|e\.?\s*V\.?|Amtsgericht|Institut|Ambulanz|Stiftung)\b",
+    re.I,
+)
+_PERSON_CUE = re.compile(
+    r"(?:Dr\.?|Prof\.?|Chefarzt|Chefärztin|Oberarzt|Oberärztin|Assistenzarzt|Assistenzärztin|"
+    r"Frau|Herr)\s*(?:med\.?\s*)?(?:\n\s*)?$",
+    re.I,
+)
+_INDEFINITE_QUANTIFIER = re.compile(r"\b(?:zwei|zweier|beide|mehrere)\s+$", re.I)
+_TECHNICAL_VALUE = re.compile(
+    r"^\s*:\s*[-+]?\d+(?:[.,]\d+)?\s*(?:hz|khz|pV|µV|uV|kg|cm|mg|/s)\b",
+    re.I,
+)
+_MEDICAL_NON_PERSON_TERMS = {"rolandofoki", "rolando-foki", "rolandische foki"}
 _ADDRESS_DENYLIST = {
     "keine", "kein", "keinen", "keinem", "keiner", "keines", "ohne", "nicht", "sehr",
     "und", "oder", "der", "die", "das", "den", "dem", "ein", "eine", "einer", "eines",
@@ -418,6 +434,14 @@ def _valid_entity_value(value: str) -> bool:
 def _model_entity_rejection(kind: str, value: str, text: str) -> str | None:
     if kind == "DOB":
         return None if _has_birth_context(value, text) else "not_birth_context"
+    if kind == "PATIENT":
+        return _patient_entity_rejection(value, text)
+    if kind == "EMAIL":
+        return None if "@" in value else "missing_at_sign"
+    if kind == "PHONE":
+        digits = sum(character.isdigit() for character in value)
+        phone_shape = bool(re.fullmatch(r"\+?[0-9 ()/.,-]+", value))
+        return None if digits >= 3 and phone_shape else "not_phone_like"
     if kind != "ADDR":
         return None
     normalized = value.strip(" .,;:").lower()
@@ -432,6 +456,33 @@ def _model_entity_rejection(kind: str, value: str, text: str) -> str | None:
     if _ADDRESS_MATERIAL.search(value) or _patient_linked_place(value, text):
         return None
     return "not_address_like"
+
+
+def _patient_entity_rejection(value: str, text: str) -> str | None:
+    matches = list(re.finditer(rf"(?<!\w){re.escape(value)}(?!\w)", text, re.I))
+    if any(_has_person_context(text, match.start(), match.end()) for match in matches):
+        return None
+    if _INSTITUTION_ENTITY.search(value):
+        return "institutional_term"
+    for match in matches:
+        before = text[max(0, match.start() - 80):match.start()]
+        after = text[match.end():match.end() + 80]
+        if _INSTITUTION_ENTITY.search(_line_at(text, match.start())):
+            return "institutional_context"
+        if _INDEFINITE_QUANTIFIER.search(before):
+            return "quantified_term"
+        if _TECHNICAL_VALUE.search(after) or _ADDRESS_UNIT.search(value):
+            return "technical_context"
+    normalized = re.sub(r"\s+", " ", value.strip().lower())
+    if normalized in _MEDICAL_NON_PERSON_TERMS and len(matches) >= 2:
+        return "medical_term"
+    return None
+
+
+def _has_person_context(text: str, start: int, end: int) -> bool:
+    before = text[max(0, start - 60):start]
+    after = text[end:end + 2]
+    return bool(_PERSON_CUE.search(before) or (before.endswith("(") and after.startswith(")")))
 
 
 def _model_entity_values(kind: str, value: str) -> list[str]:

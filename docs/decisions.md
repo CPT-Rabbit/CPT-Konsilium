@@ -97,6 +97,8 @@
 - Model-sourced ADDRESS values are validated before global substitution; clinical words and institutional city mentions are rejected unchanged.
 - Digits alone are not address evidence; ADDR requires street, house-number, or PLZ structure, while age/unit/kinship spans are hard rejects.
 - Rejected model entities are recorded in preview reports only as PII-free kind/reason pairs.
+- Model-sourced PATIENT values remain privacy-first, but strong institutional, quantified-medical, and technical evidence prevents clinical or letterhead text from being replaced as a person.
+- Model-sourced EMAIL values must contain `@`; PHONE values must have a numeric phone shape.
 - Model-sourced DOB values require a birth marker at each replacement span; letter and event dates remain dates.
 - Multi-line ADDRESS entities are validated and substituted one line at a time, so greeting text cannot be absorbed into an address token.
 - Deterministic PLZ/city patterns are line-bound and reject any remaining cross-line capture before substitution.

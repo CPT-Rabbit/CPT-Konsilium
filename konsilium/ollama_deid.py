@@ -144,6 +144,8 @@ def _prompt(text: str) -> str:
         "in 'Hamburg, den ...', 'Amtsgericht Hamburg', or 'Ort/ Region, DD.MM.YYYY' out of ADDRESS. "
         "A date is DOB only when explicitly attached to geb., geboren, Geburtsdatum, or an equivalent "
         "birth marker; never classify letter dates or medical event dates as DOB. "
+        "PERSON values must be human proper names, never institutions, medical findings, anatomical "
+        "terms, or technical labels. EMAIL must contain @ and PHONE must be a phone-number value. "
         "Extract proper names only; never generic role words like Eltern, Mutter, Patient. "
         "Return strict JSON only matching the provided schema. "
         "Allowed kinds: PERSON, ADDRESS, DOB, INSURANCE, EMAIL, PHONE. "

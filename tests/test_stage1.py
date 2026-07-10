@@ -215,6 +215,53 @@ class Stage1Test(unittest.TestCase):
             ["age_pattern", "unit_value", "unit_value", "kinship_word"],
         )
 
+    def test_model_patient_email_phone_entities_require_kind_evidence(self) -> None:
+        source = "\n".join([
+            "WILHELMSTIFT Katholisches Kinderkrankenhaus gGmbH",
+            "Nachweis zweier Rolandofoki.",
+            "Rolandofoki ohne Auffälligkeit.",
+            "ftp-Filter: 0,53 Hz",
+            "Alpha-Kontakt",
+            "(Erika Beispiel)",
+            "Chefarzt Holger Stein",
+            "Frau Anna Muster",
+            "Kontakt (040) 12",
+        ])
+        document = deidentify(
+            source,
+            pii_detector=lambda text: [
+                PiiEntity("PERSON", "Katholisches Kinderkrankenhaus"),
+                PiiEntity("PERSON", "Rolandofoki"),
+                PiiEntity("EMAIL", "ftp-Filter"),
+                PiiEntity("PHONE", "Alpha-Kontakt"),
+                PiiEntity("PERSON", "Erika Beispiel"),
+                PiiEntity("PERSON", "Holger Stein"),
+                PiiEntity("PERSON", "Anna Muster"),
+                PiiEntity("PHONE", "(040) 12"),
+            ],
+        )
+
+        self.assertIn("WILHELMSTIFT Katholisches Kinderkrankenhaus gGmbH", document.text)
+        self.assertIn("Nachweis zweier Rolandofoki.", document.text)
+        self.assertIn("Rolandofoki ohne Auffälligkeit.", document.text)
+        self.assertIn("ftp-Filter: 0,53 Hz", document.text)
+        self.assertIn("Alpha-Kontakt", document.text)
+        self.assertNotIn("Erika Beispiel", document.text)
+        self.assertNotIn("Holger Stein", document.text)
+        self.assertNotIn("Anna Muster", document.text)
+        self.assertNotIn("(040) 12", document.text)
+        self.assertEqual(document.text.count("[PATIENT_"), 3)
+        self.assertIn("[PHONE_1]", document.text)
+        self.assertEqual(
+            [(item.kind, item.reason) for item in document.rejected_entities],
+            [
+                ("PATIENT", "institutional_term"),
+                ("PATIENT", "quantified_term"),
+                ("EMAIL", "missing_at_sign"),
+                ("PHONE", "not_phone_like"),
+            ],
+        )
+
     def test_institutional_city_is_retained_but_patient_residence_is_tokenized(self) -> None:
         institutional = "Hamburg, den 10.09.2025\nAmtsgericht Hamburg"
         institution_document = deidentify(
@@ -566,6 +613,39 @@ class Stage1Test(unittest.TestCase):
             payload = json.dumps(report, ensure_ascii=False)
             self.assertNotIn("Geschwisterkind", payload)
             self.assertNotIn("40 kg", payload)
+
+    def test_deid_preview_reports_kind_validation_without_entity_values(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "model-overreach.txt"
+            source.write_text(
+                "Klinikum Katholisches Kinderkrankenhaus\nftp-Filter: 0,53 Hz\nAlpha-Kontakt",
+                encoding="utf-8",
+            )
+
+            result = deid_preview(
+                Config.model_validate({"runtime": {"patient_root": root}}),
+                source,
+                pii_detector=lambda text: [
+                    PiiEntity("PERSON", "Katholisches Kinderkrankenhaus"),
+                    PiiEntity("EMAIL", "ftp-Filter"),
+                    PiiEntity("PHONE", "Alpha-Kontakt"),
+                ],
+            )
+
+            report = json.loads(Path(result["residue_report_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(
+                report["rejected_entities"],
+                [
+                    {"kind": "PATIENT", "reason": "institutional_term"},
+                    {"kind": "EMAIL", "reason": "missing_at_sign"},
+                    {"kind": "PHONE", "reason": "not_phone_like"},
+                ],
+            )
+            payload = json.dumps(report, ensure_ascii=False)
+            self.assertNotIn("Kinderkrankenhaus", payload)
+            self.assertNotIn("ftp-Filter", payload)
+            self.assertNotIn("Alpha-Kontakt", payload)
 
     def test_egress_guard_rejects_tokens_and_raw_pii(self) -> None:
         assert_safe_knowledge_query("metformin hba1c older adults guideline")
@@ -993,6 +1073,8 @@ class Stage1Test(unittest.TestCase):
         self.assertIn("Amtsgericht Hamburg", calls[0][1]["prompt"])
         self.assertIn("Ort/ Region, DD.MM.YYYY", calls[0][1]["prompt"])
         self.assertIn("never classify letter dates", calls[0][1]["prompt"])
+        self.assertIn("never institutions, medical findings", calls[0][1]["prompt"])
+        self.assertIn("EMAIL must contain @", calls[0][1]["prompt"])
         self.assertIs(calls[0][1]["think"], False)
         self.assertEqual(calls[0][1]["options"], {"temperature": 0})
         self.assertEqual({call[2] for call in calls}, {321})
