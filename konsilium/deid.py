@@ -52,6 +52,9 @@ _ADDRESS_DENYLIST = {
     "und", "oder", "der", "die", "das", "den", "dem", "ein", "eine", "einer", "eines",
     "mit", "von", "zu", "im", "in", "am", "an",
 }
+_LETTERHEAD_PLACE_DATE = re.compile(
+    r"^\s*[A-ZÄÖÜ][^,/\n]{1,60}/\s*[A-ZÄÖÜ][^,\n]{1,60},\s*\d{1,2}\.\d{1,2}\.\d{4}\s*$"
+)
 _GERMAN_MONTHS = {
     "januar": 1, "februar": 2, "märz": 3, "maerz": 3, "april": 4, "mai": 5, "juni": 6,
     "juli": 7, "juëi": 7, "august": 8, "september": 9, "oktober": 10, "november": 11, "dezember": 12,
@@ -237,14 +240,16 @@ def deidentify(
         entities = []
         for entity in pii_detector(clean):
             kind = _normal_kind(entity.kind)
-            value = entity.value.strip()
-            if not kind or not _valid_entity_value(value):
+            if not kind:
                 continue
-            rejection = _model_entity_rejection(kind, value, clean)
-            if rejection:
-                rejected_entities.append(RejectedEntity(kind, rejection))
-                continue
-            entities.append((kind, value))
+            for value in _model_entity_values(kind, entity.value):
+                if not _valid_entity_value(value):
+                    continue
+                rejection = _model_entity_rejection(kind, value, clean)
+                if rejection:
+                    rejected_entities.append(RejectedEntity(kind, rejection))
+                    continue
+                entities.append((kind, value))
         for kind, value in sorted(entities, key=lambda item: len(item[1]), reverse=True):
             clean = _replace_entity(clean, kind, value, token, today, retained_emails)
     for value in sorted(
@@ -344,6 +349,8 @@ def _replace_entity_segment(
 ) -> str:
     def replace(match: re.Match[str]) -> str:
         position = offset + match.start()
+        if kind == "DOB" and not _is_birth_context(text, position):
+            return match.group(0)
         if _retain_institutional_value(kind, value, text, position):
             if kind == "EMAIL":
                 retained_emails.add(value)
@@ -368,6 +375,8 @@ def _valid_entity_value(value: str) -> bool:
 
 
 def _model_entity_rejection(kind: str, value: str, text: str) -> str | None:
+    if kind == "DOB":
+        return None if _has_birth_context(value, text) else "not_birth_context"
     if kind != "ADDR":
         return None
     normalized = value.strip(" .,;:").lower()
@@ -376,6 +385,27 @@ def _model_entity_rejection(kind: str, value: str, text: str) -> str | None:
     if _ADDRESS_MATERIAL.search(value) or _patient_linked_place(value, text):
         return None
     return "not_address_like"
+
+
+def _model_entity_values(kind: str, value: str) -> list[str]:
+    values = value.splitlines() if kind == "ADDR" else [value]
+    return [item.strip() for item in values if item.strip()]
+
+
+def _has_birth_context(value: str, text: str) -> bool:
+    pattern = re.compile(rf"(?<!\w){re.escape(value)}(?!\w)", re.I)
+    return any(_is_birth_context(text, match.start()) for match in pattern.finditer(text))
+
+
+def _is_birth_context(text: str, position: int) -> bool:
+    line_start = text.rfind("\n", 0, position) + 1
+    prefix = text[line_start:position]
+    return bool(re.search(
+        r"(?:\bDOB\b|Date of birth|Geburtsdatum|geboren(?:\s+am)?|geb\s*\.?)"
+        r"[^\n]{0,64}$",
+        prefix,
+        re.I,
+    ))
 
 
 def _patient_linked_place(value: str, text: str) -> bool:
@@ -415,7 +445,11 @@ def _is_institutional_address(text: str, position: int) -> bool:
     lines = text.splitlines()
     line_index = text[:position].count("\n")
     context = "\n".join(lines[max(0, line_index - 4):line_index + 5])
-    if _PRIVATE_ADDRESS_MARKERS.search(context) or _is_recipient_address(lines, line_index):
+    if _is_recipient_address(lines, line_index):
+        return False
+    if _LETTERHEAD_PLACE_DATE.fullmatch(_line_at(text, position)):
+        return True
+    if _PRIVATE_ADDRESS_MARKERS.search(context):
         return False
     return bool(_INSTITUTION_MARKERS.search(context))
 

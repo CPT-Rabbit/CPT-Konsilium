@@ -203,6 +203,42 @@ class Stage1Test(unittest.TestCase):
         self.assertNotIn("Rügen", residence_document.text)
         self.assertIn("[ADDR_1]", residence_document.text)
 
+    def test_letterhead_compound_place_keeps_letter_date_and_is_context_consistent(self) -> None:
+        source = "\n".join([
+            "Hohenhorst/ Rügen, 01.04.2019",
+            "Epikrise vom 01.04.2019",
+            "[PATIENT_1] lebt auf Rügen.",
+            "geb. 19.07.2015",
+        ])
+        document = deidentify(
+            source,
+            pii_detector=lambda text: [
+                PiiEntity("ADDRESS", "Hohenhorst"),
+                PiiEntity("ADDRESS", "Rügen"),
+                PiiEntity("DOB", "01.04.2019"),
+            ],
+            today=date(2026, 7, 10),
+        )
+
+        self.assertIn("Hohenhorst/ Rügen, 01.04.2019", document.text)
+        self.assertIn("Epikrise vom 01.04.2019", document.text)
+        self.assertIn("[PATIENT_1] lebt auf [ADDR_1].", document.text)
+        self.assertIn("geb. age 10", document.text)
+        self.assertNotIn("age 7", document.text)
+
+    def test_multiline_address_entity_never_swallows_greeting(self) -> None:
+        source = "nachrichtlich: [PATIENT_3], [ADDR_3], Haus 7A Greifswald\nSehr geehrte Frau Kollegin,"
+        document = deidentify(
+            source,
+            pii_detector=lambda text: [PiiEntity("ADDRESS", "Haus 7A Greifswald\nSehr")],
+        )
+
+        self.assertIn("[ADDR_1]", document.text)
+        self.assertIn("\nSehr geehrte Frau Kollegin,", document.text)
+        self.assertNotIn("[ADDR_1] geehrte", document.text)
+        self.assertNotIn("\n", next(value for key, value in document.vault.items() if key == "[ADDR_1]"))
+        self.assertNotIn("Sehr", document.vault.values())
+
     def test_ambiguous_bare_address_is_tokenized(self) -> None:
         document = deidentify("Musterstraße 12\n10115 Berlin")
 
@@ -883,6 +919,8 @@ class Stage1Test(unittest.TestCase):
         self.assertIn("personal ADDRESS data", calls[0][1]["prompt"])
         self.assertIn("never function words, negations", calls[0][1]["prompt"])
         self.assertIn("Amtsgericht Hamburg", calls[0][1]["prompt"])
+        self.assertIn("Ort/ Region, DD.MM.YYYY", calls[0][1]["prompt"])
+        self.assertIn("never classify letter dates", calls[0][1]["prompt"])
         self.assertIs(calls[0][1]["think"], False)
         self.assertEqual(calls[0][1]["options"], {"temperature": 0})
         self.assertEqual({call[2] for call in calls}, {321})

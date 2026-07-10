@@ -96,6 +96,9 @@
 - The deterministic tokenizer and residue-gate exemption use the same recipient classification.
 - Model-sourced ADDRESS values are validated before global substitution; clinical words and institutional city mentions are rejected unchanged.
 - Rejected model entities are recorded in preview reports only as PII-free kind/reason pairs.
+- Model-sourced DOB values require a birth marker at each replacement span; letter and event dates remain dates.
+- Multi-line ADDRESS entities are validated and substituted one line at a time, so greeting text cannot be absorbed into an address token.
+- Compound `place/place, DD.MM.YYYY` letterhead lines are retained consistently while the same toponym remains tokenizable in patient-residence context.
 
 ## 2026-07-09 - Public Snapshot Hygiene
 
