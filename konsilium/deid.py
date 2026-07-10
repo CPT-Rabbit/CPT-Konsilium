@@ -46,7 +46,22 @@ DEFAULT_RESIDUE_POLICY = {
 _MIN_ENTITY_CHARS = 3
 _PROTECTED_SPAN = re.compile(r"\[[A-Z][A-Z_]*_\d+\]|\bage\s+\d{1,3}\b", re.I)
 _STREET_SUFFIXES = r"straße|strasse|str\.?|weg|allee|platz|damm|ring|gasse|stieg|twiete|kamp|redder|chaussee|deich|brook|horst|wall|steig"
-_ADDRESS_MATERIAL = re.compile(rf"\d|(?:{_STREET_SUFFIXES})\b", re.I)
+_ADDRESS_MATERIAL = re.compile(
+    rf"\b[A-Za-zÄÖÜäöüß.-]*(?i:(?:{_STREET_SUFFIXES}))\b|"
+    r"\b[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*[ \t]+\d{1,5}[A-Za-z]?\b|"
+    r"\b\d{1,5}[A-Za-z]?[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*"
+    r"(?:[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*){0,3}\b|"
+    r"\b\d{2}[ \t]?\d{3}(?:[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*)?\b"
+)
+_ADDRESS_AGE = re.compile(r"\b\d{1,3}\s*-?\s*j(?:ä|ae)hrig\w*\b", re.I)
+_ADDRESS_UNIT = re.compile(
+    r"\b\d+(?:[.,]\d+)?(?:\s*-\s*\d+(?:[.,]\d+)?)?\s*(?:kg|cm|mm|hz|mg|g|ml|l|/s)\b",
+    re.I,
+)
+_ADDRESS_KINSHIP = re.compile(
+    r"\b(?:Geschwisterkind|Geschwister|Kind|Mutter|Vater|Eltern|Bruder|Schwester|Sohn|Tochter)\w*\b",
+    re.I,
+)
 _ADDRESS_DENYLIST = {
     "keine", "kein", "keinen", "keinem", "keiner", "keines", "ohne", "nicht", "sehr",
     "und", "oder", "der", "die", "das", "den", "dem", "ein", "eine", "einer", "eines",
@@ -406,6 +421,12 @@ def _model_entity_rejection(kind: str, value: str, text: str) -> str | None:
     if kind != "ADDR":
         return None
     normalized = value.strip(" .,;:").lower()
+    if _ADDRESS_AGE.search(value):
+        return "age_pattern"
+    if _ADDRESS_UNIT.search(value):
+        return "unit_value"
+    if _ADDRESS_KINSHIP.search(value):
+        return "kinship_word"
     if normalized in _ADDRESS_DENYLIST:
         return "generic_word"
     if _ADDRESS_MATERIAL.search(value) or _patient_linked_place(value, text):

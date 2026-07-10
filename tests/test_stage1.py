@@ -188,6 +188,33 @@ class Stage1Test(unittest.TestCase):
             ],
         )
 
+    def test_model_address_entities_require_structural_address_evidence(self) -> None:
+        source = "\n".join([
+            "Musterweg 4",
+            "7-jähriges Geschwisterkind ist gesund.",
+            "Gewicht 40 kg, Grundrhythmus 9-11/s Alpha.",
+            "Die Mutter berichtet unauffällige Entwicklung.",
+        ])
+        document = deidentify(
+            source,
+            pii_detector=lambda text: [
+                PiiEntity("ADDRESS", "7-jähriges Geschwisterkind"),
+                PiiEntity("ADDRESS", "40 kg"),
+                PiiEntity("ADDRESS", "9-11/s Alpha"),
+                PiiEntity("ADDRESS", "Mutter"),
+            ],
+        )
+
+        self.assertIn("[ADDR_1]", document.text)
+        self.assertIn("7-jähriges Geschwisterkind ist gesund.", document.text)
+        self.assertIn("40 kg", document.text)
+        self.assertIn("9-11/s Alpha", document.text)
+        self.assertIn("Die Mutter", document.text)
+        self.assertEqual(
+            [item.reason for item in document.rejected_entities],
+            ["age_pattern", "unit_value", "unit_value", "kinship_word"],
+        )
+
     def test_institutional_city_is_retained_but_patient_residence_is_tokenized(self) -> None:
         institutional = "Hamburg, den 10.09.2025\nAmtsgericht Hamburg"
         institution_document = deidentify(
@@ -227,17 +254,19 @@ class Stage1Test(unittest.TestCase):
         self.assertNotIn("age 7", document.text)
 
     def test_multiline_address_entity_never_swallows_greeting(self) -> None:
-        source = "nachrichtlich: [PATIENT_3], [ADDR_3], 17 489 Greifswald\nSehr geehrte Frau Kollegin,"
+        source = "nachrichtlich: [PATIENT_3], [ADDR_3], Musterweg 4, 17 489 Greifswald\nSehr geehrte Frau Kollegin,"
         document = deidentify(
             source,
-            pii_detector=lambda text: [PiiEntity("ADDRESS", "17 489 Greifswald\nSehr")],
+            pii_detector=lambda text: [
+                PiiEntity("ADDRESS", "Musterweg 4, 17 489 Greifswald\nSehr")
+            ],
         )
 
         self.assertIn("[ADDR_1]", document.text)
+        self.assertIn("[ADDR_2]", document.text)
         self.assertIn("\nSehr geehrte Frau Kollegin,", document.text)
-        self.assertNotIn("[ADDR_1] geehrte", document.text)
-        self.assertEqual(document.vault["[ADDR_1]"], "17 489 Greifswald")
-        self.assertNotIn("Sehr", document.vault.values())
+        self.assertNotIn("geehrte", " ".join(document.vault.values()))
+        self.assertTrue(all("\n" not in value and "Sehr" not in value for value in document.vault.values()))
 
     def test_model_address_span_is_split_and_trailing_greeting_word_is_trimmed(self) -> None:
         multiline = deidentify(
@@ -509,6 +538,34 @@ class Stage1Test(unittest.TestCase):
             report = json.loads(Path(result["residue_report_path"]).read_text(encoding="utf-8"))
             self.assertEqual(report["rejected_entities"], [{"kind": "ADDR", "reason": "generic_word"}])
             self.assertNotIn("keine", json.dumps(report, ensure_ascii=False))
+
+    def test_deid_preview_reports_age_unit_and_kinship_address_rejections(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "family-history.txt"
+            source.write_text(
+                "7-jähriges Geschwisterkind ist gesund. Gewicht 40 kg.",
+                encoding="utf-8",
+            )
+
+            result = deid_preview(
+                Config.model_validate({"runtime": {"patient_root": root}}),
+                source,
+                pii_detector=lambda text: [
+                    PiiEntity("ADDRESS", "7-jähriges Geschwisterkind"),
+                    PiiEntity("ADDRESS", "40 kg"),
+                    PiiEntity("ADDRESS", "Geschwisterkind"),
+                ],
+            )
+
+            report = json.loads(Path(result["residue_report_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(
+                [item["reason"] for item in report["rejected_entities"]],
+                ["age_pattern", "unit_value", "kinship_word"],
+            )
+            payload = json.dumps(report, ensure_ascii=False)
+            self.assertNotIn("Geschwisterkind", payload)
+            self.assertNotIn("40 kg", payload)
 
     def test_egress_guard_rejects_tokens_and_raw_pii(self) -> None:
         assert_safe_knowledge_query("metformin hba1c older adults guideline")

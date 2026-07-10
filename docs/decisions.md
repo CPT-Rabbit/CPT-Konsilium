@@ -95,6 +95,7 @@
 - A patient token adjacent to an address prevents institutional retention unless the block is clearly an institutional affiliation.
 - The deterministic tokenizer and residue-gate exemption use the same recipient classification.
 - Model-sourced ADDRESS values are validated before global substitution; clinical words and institutional city mentions are rejected unchanged.
+- Digits alone are not address evidence; ADDR requires street, house-number, or PLZ structure, while age/unit/kinship spans are hard rejects.
 - Rejected model entities are recorded in preview reports only as PII-free kind/reason pairs.
 - Model-sourced DOB values require a birth marker at each replacement span; letter and event dates remain dates.
 - Multi-line ADDRESS entities are validated and substituted one line at a time, so greeting text cannot be absorbed into an address token.
