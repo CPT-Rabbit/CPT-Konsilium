@@ -98,6 +98,7 @@
 - Rejected model entities are recorded in preview reports only as PII-free kind/reason pairs.
 - Model-sourced DOB values require a birth marker at each replacement span; letter and event dates remain dates.
 - Multi-line ADDRESS entities are validated and substituted one line at a time, so greeting text cannot be absorbed into an address token.
+- Deterministic PLZ/city patterns are line-bound and reject any remaining cross-line capture before substitution.
 - Compound `place/place, DD.MM.YYYY` letterhead lines are retained consistently while the same toponym remains tokenizable in patient-residence context.
 
 ## 2026-07-09 - Public Snapshot Hygiene

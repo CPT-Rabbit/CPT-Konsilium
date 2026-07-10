@@ -52,6 +52,11 @@ _ADDRESS_DENYLIST = {
     "und", "oder", "der", "die", "das", "den", "dem", "ein", "eine", "einer", "eines",
     "mit", "von", "zu", "im", "in", "am", "an",
 }
+_TRAILING_ADDRESS_WORDS = re.compile(
+    r"(?:[ \t]+(?:Sehr|Mit|Liebe|Lieber|Guten|Freundliche[nrms]?))+$",
+    re.I,
+)
+_ADDRESS_WORD_EXCLUSION = r"Sehr|Mit|Liebe|Lieber|Guten|Freundliche[nrms]?"
 _LETTERHEAD_PLACE_DATE = re.compile(
     r"^\s*[A-ZÄÖÜ][^,/\n]{1,60}/\s*[A-ZÄÖÜ][^,\n]{1,60},\s*\d{1,2}\.\d{1,2}\.\d{4}\s*$"
 )
@@ -137,7 +142,13 @@ _FIELD_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
             re.I,
         ),
     ),
-    ("ADDR", re.compile(r"\b(\d{2}\s?\d{3}\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*){0,3})\b")),
+    (
+        "ADDR",
+        re.compile(
+            rf"\b(\d{{2}}[ \t]?\d{{3}}[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*"
+            rf"(?:[ \t]+(?!(?:{_ADDRESS_WORD_EXCLUSION})\b)[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*){{0,3}})\b"
+        ),
+    ),
     (
         "EMAIL",
         re.compile(r"(?<!\w)([.\w][\w.%+-]*@[\w-]+[\w .-]*\.?\s?(?:de|com|org|net|eu))(?!\w)", re.I),
@@ -178,7 +189,10 @@ _RESIDUE_PATTERNS: dict[str, re.Pattern[str]] = {
         rf"[A-Za-zÄÖÜäöüß.-]*(?:{_STREET_SUFFIXES})[ \t]+\d{{1,5}}[A-Za-z]?\b",
         re.I,
     ),
-    "PLZ_CITY": re.compile(r"\b\d{2}\s?\d{3}\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*){0,3}\b"),
+    "PLZ_CITY": re.compile(
+        rf"\b\d{{2}}[ \t]?\d{{3}}[ \t]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*"
+        rf"(?:[ \t]+(?!(?:{_ADDRESS_WORD_EXCLUSION})\b)[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]*){{0,3}}\b"
+    ),
     "PHONE": re.compile(r"\b(?:Tel(?:efon)?|Fax)\.?\s*:?\s*\+?[0-9][0-9 ()/-]{5,}[0-9]", re.I),
     "EMAIL": re.compile(r"(?<=\w)@(?=\w)"),
     "DIGIT_RUN": re.compile(r"(?<!\d)\d{6,}(?!\d)"),
@@ -233,7 +247,7 @@ def deidentify(
     clean = text
     for kind, pattern in _FIELD_PATTERNS:
         clean = pattern.sub(
-            lambda match: _replace_match(match, kind, token, today, retained_emails),
+            lambda match: _replace_match(match, kind, token, today, retained_emails, rejected_entities),
             clean,
         )
     if pii_detector is not None:
@@ -314,8 +328,18 @@ def assert_no_blocking_residue(
     return hits
 
 
-def _replace_match(match: re.Match[str], kind: str, token, today: date, retained_emails: set[str]) -> str:
+def _replace_match(
+    match: re.Match[str],
+    kind: str,
+    token,
+    today: date,
+    retained_emails: set[str],
+    rejected_entities: list[RejectedEntity],
+) -> str:
     value = match.group(1).strip()
+    if "\n" in value or "\r" in value:
+        rejected_entities.append(RejectedEntity(kind, "cross_line_span"))
+        return match.group(0)
     if _retain_institutional_value(kind, value, match.string, match.start(1)):
         if kind == "EMAIL":
             retained_emails.add(value)
@@ -325,6 +349,8 @@ def _replace_match(match: re.Match[str], kind: str, token, today: date, retained
 
 
 def _replace_entity(text: str, kind: str, value: str, token, today: date, retained_emails: set[str]) -> str:
+    if "\n" in value or "\r" in value:
+        return text
     pattern = re.compile(rf"(?<!\w){re.escape(value)}(?!\w)")
     parts = []
     start = 0
@@ -388,7 +414,9 @@ def _model_entity_rejection(kind: str, value: str, text: str) -> str | None:
 
 
 def _model_entity_values(kind: str, value: str) -> list[str]:
-    values = value.splitlines() if kind == "ADDR" else [value]
+    values = value.splitlines()
+    if kind == "ADDR":
+        values = [_TRAILING_ADDRESS_WORDS.sub("", item) for item in values]
     return [item.strip() for item in values if item.strip()]
 
 

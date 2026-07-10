@@ -227,17 +227,32 @@ class Stage1Test(unittest.TestCase):
         self.assertNotIn("age 7", document.text)
 
     def test_multiline_address_entity_never_swallows_greeting(self) -> None:
-        source = "nachrichtlich: [PATIENT_3], [ADDR_3], Haus 7A Greifswald\nSehr geehrte Frau Kollegin,"
+        source = "nachrichtlich: [PATIENT_3], [ADDR_3], 17 489 Greifswald\nSehr geehrte Frau Kollegin,"
         document = deidentify(
             source,
-            pii_detector=lambda text: [PiiEntity("ADDRESS", "Haus 7A Greifswald\nSehr")],
+            pii_detector=lambda text: [PiiEntity("ADDRESS", "17 489 Greifswald\nSehr")],
         )
 
         self.assertIn("[ADDR_1]", document.text)
         self.assertIn("\nSehr geehrte Frau Kollegin,", document.text)
         self.assertNotIn("[ADDR_1] geehrte", document.text)
-        self.assertNotIn("\n", next(value for key, value in document.vault.items() if key == "[ADDR_1]"))
+        self.assertEqual(document.vault["[ADDR_1]"], "17 489 Greifswald")
         self.assertNotIn("Sehr", document.vault.values())
+
+    def test_model_address_span_is_split_and_trailing_greeting_word_is_trimmed(self) -> None:
+        multiline = deidentify(
+            "Haus 7A Greifswald\nSehr geehrte Frau Kollegin,",
+            pii_detector=lambda text: [PiiEntity("ADDRESS", "Haus 7A Greifswald\nSehr")],
+        )
+        same_line = deidentify(
+            "Haus 7A Greifswald Sehr geehrte Frau Kollegin,",
+            pii_detector=lambda text: [PiiEntity("ADDRESS", "Haus 7A Greifswald Sehr")],
+        )
+
+        self.assertIn("[ADDR_1]\nSehr geehrte Frau Kollegin,", multiline.text)
+        self.assertIn("[ADDR_1] Sehr geehrte Frau Kollegin,", same_line.text)
+        self.assertEqual(multiline.vault["[ADDR_1]"], "Haus 7A Greifswald")
+        self.assertEqual(same_line.vault["[ADDR_1]"], "Haus 7A Greifswald")
 
     def test_ambiguous_bare_address_is_tokenized(self) -> None:
         document = deidentify("Musterstraße 12\n10115 Berlin")
