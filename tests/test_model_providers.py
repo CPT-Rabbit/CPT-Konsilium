@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -38,7 +39,77 @@ class _Client:
         return next(self.responses)
 
 
+class _SlowCompletions:
+    def __init__(self, delay_s: float):
+        self.delay_s = delay_s
+
+    def create(self, **kwargs):
+        time.sleep(self.delay_s)
+        message = SimpleNamespace(content='{"ok":true}', tool_calls=[])
+        return SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason="stop")])
+
+
+class _SlowModelClient:
+    def __init__(self, delay_s: float):
+        self.chat = SimpleNamespace(completions=_SlowCompletions(delay_s))
+        self.responses = SimpleNamespace(create=lambda **kwargs: time.sleep(delay_s))
+
+
+def _model_runtime():
+    try:
+        from konsilium.model_client import ModelClient, ModelTimeout
+    except ModuleNotFoundError as error:
+        raise unittest.SkipTest(f"model runtime dependency is unavailable: {error.name}") from error
+    return ModelClient, ModelTimeout
+
+
 class ModelProviderTest(unittest.TestCase):
+    def test_blocking_call_ignores_stream_stale_threshold(self) -> None:
+        ModelClient, _ = _model_runtime()
+
+        model = ModelClient(
+            SimpleNamespace(kind="custom"),
+            request_timeout_s=0.3,
+            stale_timeout_s=0.01,
+        )
+
+        response = model._call_blocking(_SlowModelClient(0.06), {"stream": False})
+
+        self.assertEqual(response.content, '{"ok":true}')
+
+    def test_blocking_call_honors_absolute_deadline(self) -> None:
+        ModelClient, ModelTimeout = _model_runtime()
+
+        model = ModelClient(SimpleNamespace(kind="custom"), request_timeout_s=0.03)
+        started = time.monotonic()
+
+        with self.assertRaisesRegex(ModelTimeout, "absolute deadline"):
+            model._call_blocking(_SlowModelClient(0.2), {"stream": False})
+
+        self.assertLess(time.monotonic() - started, 0.15)
+
+    def test_responses_blocking_call_ignores_stream_stale_threshold(self) -> None:
+        ModelClient, _ = _model_runtime()
+
+        normalized = SimpleNamespace(
+            content='{"ok":true}',
+            tool_calls=[],
+            finish_reason="stop",
+            reasoning_summary="",
+            reasoning_items=[],
+            usage={},
+        )
+        model = ModelClient(
+            SimpleNamespace(kind="codex"),
+            request_timeout_s=0.3,
+            stale_timeout_s=0.01,
+        )
+
+        with patch("konsilium.providers.codex_responses.normalize_response", return_value=normalized):
+            response = model._call_responses_blocking(_SlowModelClient(0.06), {"stream": False})
+
+        self.assertEqual(response.content, '{"ok":true}')
+
     def test_auth_store_defaults_to_konsilium_env(self) -> None:
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "auth.json"

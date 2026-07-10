@@ -77,6 +77,11 @@
 - OCR-spaced postal codes follow the same private/institutional context policy as ordinary postal codes.
 - `ingest --from-preview` is the only operator override for OCR residue: it accepts a locally edited `previews/preview-*.md`, reloads its preview vault, and must pass the full residue gate before any patient-memory write.
 
+## 2026-07-10 - Blocking Model Deadlines
+
+- The stale timeout measures silence between streaming chunks only.
+- Blocking JSON and subscription-provider calls use `request_timeout_s` as their sole watchdog deadline.
+
 ## 2026-07-09 - Public Snapshot Hygiene
 
 - Public releases are sanitized working-tree snapshots, not private history pushes.

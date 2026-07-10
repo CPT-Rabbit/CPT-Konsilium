@@ -35,7 +35,7 @@ class ModelResponse:
 
 
 class ModelTimeout(Exception):
-    """Provider went silent longer than the stale threshold — abandon, retry."""
+    """Provider exceeded the streaming-silence or absolute request deadline."""
 
 
 class ModelBadRequest(Exception):
@@ -286,8 +286,7 @@ class ModelClient:
         return self._normalize("".join(content_parts), list(tool_acc.values()), finish)
 
     def _call_blocking(self, client, kwargs: dict, *, deadline: float | None = None) -> ModelResponse:
-        """Non-stream: call in a background thread + watchdog. If silence > stale_timeout —
-        abandon (the orphan thread dies on its own), retry with a new client."""
+        """Non-stream: call in a background thread with an absolute-deadline watchdog."""
         box: dict[str, Any] = {}
 
         def _run():
@@ -295,17 +294,19 @@ class ModelClient:
                 box["resp"] = client.chat.completions.create(**kwargs)
             except Exception as e:  # noqa: BLE001 — propagate to the main thread
                 box["err"] = e
+            finally:
+                box["completed_at"] = time.monotonic()
 
         t = threading.Thread(target=_run, daemon=True)
-        start = time.monotonic()
-        deadline = deadline or (start + self.request_timeout_s)
+        deadline = deadline or (time.monotonic() + self.request_timeout_s)
         t.start()
         while t.is_alive():
-            t.join(timeout=0.3)
-            if time.monotonic() >= deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 raise ModelTimeout("blocking call absolute deadline exceeded")
-            if time.monotonic() - start > self.stale_timeout_s:
-                raise ModelTimeout(f"blocking call stale > {self.stale_timeout_s}s")
+            t.join(timeout=min(0.3, remaining))
+        if box["completed_at"] > deadline:
+            raise ModelTimeout("blocking call absolute deadline exceeded")
         if "err" in box:
             raise box["err"]
         resp = box["resp"]
@@ -339,17 +340,19 @@ class ModelClient:
                     box["normalized"] = normalize_response(client.responses.create(**request))
             except Exception as error:  # noqa: BLE001 - propagate to the main thread
                 box["err"] = error
+            finally:
+                box["completed_at"] = time.monotonic()
 
         thread = threading.Thread(target=_run, daemon=True)
-        start = time.monotonic()
-        deadline = deadline or (start + self.request_timeout_s)
+        deadline = deadline or (time.monotonic() + self.request_timeout_s)
         thread.start()
         while thread.is_alive():
-            thread.join(timeout=0.3)
-            if time.monotonic() >= deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 raise ModelTimeout("Responses call absolute deadline exceeded")
-            if time.monotonic() - start > self.stale_timeout_s:
-                raise ModelTimeout(f"Responses call stale > {self.stale_timeout_s}s")
+            thread.join(timeout=min(0.3, remaining))
+        if box["completed_at"] > deadline:
+            raise ModelTimeout("Responses call absolute deadline exceeded")
         if "err" in box:
             raise box["err"]
         normalized = box["normalized"]
