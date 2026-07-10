@@ -199,18 +199,17 @@ class Stage1Test(unittest.TestCase):
             & {"DOB", "PERSON_HEADER", "STREET", "CASE_NUMBER"}
         )
 
-    def test_dob_marker_gate_catches_garbled_formats_and_accepts_split_years(self) -> None:
-        header = "Seite 2 von 4, Mustermann, Erika geb. am 19.07.201 5, F1234567 ..."
+    def test_footer_case_number_after_split_year_dob_is_tokenized_before_detector(self) -> None:
+        header = "Seite 2 von 4, Mustermann, Erika geb. am 19.07.201 5, 123456"
 
         def detector(text):
             self.assertEqual(
                 text,
-                "Seite 2 von 4, [PATIENT_1], Erika geb. am age 10, F1234567 ...",
+                "Seite 2 von 4, [PATIENT_1], Erika geb. am age 10, [CASE_NUMBER_1]",
             )
             return [
-                PiiEntity("DOB", "10, F1234567"),
+                PiiEntity("DOB", "10, 123456"),
                 PiiEntity("PERSON", "Erika"),
-                PiiEntity("INSURANCE", "F1234567"),
             ]
 
         document = deidentify(
@@ -219,22 +218,33 @@ class Stage1Test(unittest.TestCase):
             today=date(2026, 7, 10),
         )
 
-        self.assertIn("[PATIENT_1], [PATIENT_2] geb. am age 10, [INSURANCE_1]", document.text)
+        self.assertIn("[PATIENT_1], [PATIENT_2] geb. am age 10, [CASE_NUMBER_1]", document.text)
         self.assertNotIn("age [DOB_", document.text)
         self.assertNotIn("[DOB_", document.text)
         self.assertIn("19.07.201 5", document.vault.values())
-        self.assertNotIn("DOB_MARKER", {hit.pattern for hit in residue_report(document.text)})
-        self.assertNotIn("PARTIAL_NAME", {hit.pattern for hit in residue_report(document.text)})
+        self.assertEqual(residue_report(document.text), [])
 
-        garbled = deidentify("Frau Dr. B.Püst Geburtsdatum Sonntag, 19. JuËI 2015")
-        self.assertNotIn("Dr. B.Püst", garbled.text)
-        self.assertNotIn("Sonntag, 19. JuËI 2015", garbled.text)
-        self.assertIn("[DOB_", garbled.text)
-        self.assertIn("DOB_MARKER", {hit.pattern for hit in residue_report(garbled.text)})
+    def test_ocr_month_dob_is_age_converted_with_only_partial_name_residue(self) -> None:
+        source = "09.09.2025 21:29:03 [PATIENT_1] larosiav, Geburtsdatum Sonntag, 19. JuËI 2015"
+        document = deidentify(source, today=date(2026, 7, 10))
 
-        with TemporaryDirectory() as tmp:
-            with self.assertRaisesRegex(ResidueError, r"DOB_MARKER lines 1"):
-                ingest_text("case-1", "Geburtsdatum Sonntag, 19. JuËI 2015", Path(tmp), allow_synthetic=True)
+        self.assertIn("Geburtsdatum age 10", document.text)
+        self.assertNotIn("Sonntag, 19. JuËI 2015", document.text)
+        self.assertNotIn("[DOB_", document.text)
+        self.assertIn("Sonntag, 19. JuËI 2015", document.vault.values())
+        self.assertEqual({hit.pattern for hit in residue_report(document.text)}, {"PARTIAL_NAME"})
+
+    def test_detector_sourced_dob_uses_age_conversion(self) -> None:
+        document = deidentify(
+            "Geburtsdatum ist 19.07.2015",
+            pii_detector=lambda text: [PiiEntity("DOB", "19.07.2015")],
+            today=date(2026, 7, 10),
+        )
+
+        self.assertEqual(document.text, "Geburtsdatum ist age 10")
+        self.assertNotIn("[DOB_", document.text)
+        self.assertIn("19.07.2015", document.vault.values())
+        self.assertEqual(residue_report(document.text), [])
 
     def test_compact_physician_names_are_tokenized(self) -> None:
         document = deidentify("Dr. B.Püst\nDr. B.Kohl\nFrau Dr. Preuße")

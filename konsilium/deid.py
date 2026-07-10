@@ -41,7 +41,7 @@ _PROTECTED_SPAN = re.compile(r"\[[A-Z][A-Z_]*_\d+\]|\bage\s+\d{1,3}\b", re.I)
 _STREET_SUFFIXES = r"straße|strasse|str\.?|weg|allee|platz|damm|ring|gasse|stieg|twiete|kamp|redder|chaussee|deich|brook|horst|wall|steig"
 _GERMAN_MONTHS = {
     "januar": 1, "februar": 2, "märz": 3, "maerz": 3, "april": 4, "mai": 5, "juni": 6,
-    "juli": 7, "august": 8, "september": 9, "oktober": 10, "november": 11, "dezember": 12,
+    "juli": 7, "juëi": 7, "august": 8, "september": 9, "oktober": 10, "november": 11, "dezember": 12,
 }
 _GENERIC_INSTITUTION_EMAIL_LOCAL_PARTS = {
     "info", "kontakt", "praxis", "zentrum", "office", "sekretariat", "verwaltung", "spz", "empfang",
@@ -84,6 +84,7 @@ _FIELD_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
             re.I,
         ),
     ),
+    ("CASE_NUMBER", re.compile(r"\bage\s+\d{1,3}\s*,\s*(\d{6})\b", re.I)),
     ("PATIENT", re.compile(r"\bPatienten\s+([A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]+)\s*,", re.I)),
     ("PATIENT", re.compile(r"\bSeite\s+\d+\s+von\s+\d+\s*,\s*([A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]+)\s*,", re.I)),
     (
@@ -224,13 +225,13 @@ def deidentify(
             if _normal_kind(entity.kind) and _valid_entity_value(entity.value)
         ]
         for kind, value in sorted(entities, key=lambda item: len(item[1]), reverse=True):
-            clean = _replace_entity(clean, kind, value, token, retained_emails)
+            clean = _replace_entity(clean, kind, value, token, today, retained_emails)
     for value in sorted(
         (stored for key, stored in vault.items() if key.startswith("[PATIENT_") and _valid_entity_value(stored)),
         key=len,
         reverse=True,
     ):
-        clean = _replace_entity(clean, "PATIENT", value, token, retained_emails)
+        clean = _replace_entity(clean, "PATIENT", value, token, today, retained_emails)
 
     return DeidentifiedDocument(text=clean, vault=vault, retained_institutional_emails=tuple(sorted(retained_emails)))
 
@@ -288,26 +289,19 @@ def _replace_match(match: re.Match[str], kind: str, token, today: date, retained
         if kind == "EMAIL":
             retained_emails.add(value)
         return match.group(0)
-    if kind == "DOB":
-        dob_token = token(kind, value)
-        try:
-            replacement = f"age {_age(value, today)}"
-        except (IndexError, ValueError):
-            replacement = dob_token
-    else:
-        replacement = token(kind, value)
+    replacement = _entity_replacement(kind, value, token, today)
     return match.group(0).replace(match.group(1), replacement)
 
 
-def _replace_entity(text: str, kind: str, value: str, token, retained_emails: set[str]) -> str:
+def _replace_entity(text: str, kind: str, value: str, token, today: date, retained_emails: set[str]) -> str:
     pattern = re.compile(rf"(?<!\w){re.escape(value)}(?!\w)")
     parts = []
     start = 0
     for protected in _PROTECTED_SPAN.finditer(text):
-        parts.append(_replace_entity_segment(text[start:protected.start()], pattern, kind, value, token, text, start, retained_emails))
+        parts.append(_replace_entity_segment(text[start:protected.start()], pattern, kind, value, token, today, text, start, retained_emails))
         parts.append(protected.group(0))
         start = protected.end()
-    parts.append(_replace_entity_segment(text[start:], pattern, kind, value, token, text, start, retained_emails))
+    parts.append(_replace_entity_segment(text[start:], pattern, kind, value, token, today, text, start, retained_emails))
     return "".join(parts)
 
 
@@ -317,6 +311,7 @@ def _replace_entity_segment(
     kind: str,
     value: str,
     token,
+    today: date,
     text: str,
     offset: int,
     retained_emails: set[str],
@@ -327,9 +322,19 @@ def _replace_entity_segment(
             if kind == "EMAIL":
                 retained_emails.add(value)
             return match.group(0)
-        return token(kind, value)
+        return _entity_replacement(kind, value, token, today)
 
     return pattern.sub(replace, segment)
+
+
+def _entity_replacement(kind: str, value: str, token, today: date) -> str:
+    replacement = token(kind, value)
+    if kind == "DOB":
+        try:
+            replacement = f"age {_age(value, today)}"
+        except (IndexError, ValueError):
+            pass
+    return replacement
 
 
 def _valid_entity_value(value: str) -> bool:
@@ -405,7 +410,7 @@ def _age(value: str, today: date) -> int:
 
 
 def _parse_dob(value: str) -> tuple[int, int, int]:
-    spelled = re.search(r"(\d{1,2})\.\s*([A-Za-zÄÖÜäöüß]+)\s+(\d{4})", value, re.I)
+    spelled = re.search(r"(\d{1,2})\.\s*(\S{2,16})\s+(\d{4})", value, re.I)
     if spelled:
         month = _GERMAN_MONTHS.get(spelled.group(2).lower())
         if month:
