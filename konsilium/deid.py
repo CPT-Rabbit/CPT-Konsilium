@@ -182,6 +182,7 @@ _PRIVATE_ADDRESS_MARKERS = re.compile(
     r"\b(?:geb\s*\.?|geboren(?:\s+am)?|wh\.?|wohnhaft|nachrichtlich|empfänger|patient(?:in)?\s*:|name\s*:)",
     re.I,
 )
+_RECIPIENT_LINE = re.compile(r"^\s*(?:Frau|Herr|An|Empfänger|Empfaenger)\s*:?\s*$", re.I)
 _CONTACT_MARKER = re.compile(r"\b(?:Tel(?:efon)?|Fax)\.?\s*:?", re.I)
 _INSTITUTION_NUMBER_MARKER = re.compile(r"\b(?:Ust-?ID|IK-?Nr|IBAN)\b", re.I)
 _DOB_MARKER = re.compile(r"\b(?:Geburtsdatum\b|geb\s*\.?)", re.I)
@@ -363,9 +364,20 @@ def _is_institutional_address(text: str, position: int) -> bool:
     lines = text.splitlines()
     line_index = text[:position].count("\n")
     context = "\n".join(lines[max(0, line_index - 4):line_index + 5])
-    if _PRIVATE_ADDRESS_MARKERS.search(context) or re.search(r"\[PATIENT_\d+\]", _line_at(text, position)):
+    if _PRIVATE_ADDRESS_MARKERS.search(context) or _is_recipient_address(lines, line_index):
         return False
     return bool(_INSTITUTION_MARKERS.search(context))
+
+
+def _is_recipient_address(lines: list[str], line_index: int) -> bool:
+    preceding = lines[max(0, line_index - 3):line_index]
+    if any(_RECIPIENT_LINE.fullmatch(line) for line in preceding):
+        return True
+    adjacent = "\n".join(lines[max(0, line_index - 2):line_index + 1])
+    if not re.search(r"\[PATIENT_\d+\]", adjacent):
+        return False
+    affiliation = "\n".join(lines[max(0, line_index - 4):line_index + 1])
+    return not _INSTITUTION_MARKERS.search(affiliation)
 
 
 def _allowed_residue(

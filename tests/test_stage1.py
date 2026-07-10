@@ -135,6 +135,29 @@ class Stage1Test(unittest.TestCase):
             & {"STREET", "PLZ_CITY", "PHONE", "DIGIT_RUN"}
         )
 
+    def test_recipient_address_adjacent_to_person_is_private(self) -> None:
+        source = "\n".join([
+            "Klinikum Musterstadt",
+            "Frau",
+            "Erika Beispiel",
+            "Striepenweg 41",
+            "21147 Hamburg",
+        ])
+        document = deidentify(
+            source,
+            pii_detector=lambda text: [PiiEntity("PERSON", "Erika Beispiel")],
+        )
+
+        self.assertNotIn("Erika Beispiel", document.text)
+        self.assertNotIn("Striepenweg 41", document.text)
+        self.assertNotIn("21147 Hamburg", document.text)
+        self.assertRegex(document.text, r"\[ADDR_\d+\]")
+
+        leaked_preview = source.replace("Erika Beispiel", "[PATIENT_13]")
+        patterns = {hit.pattern for hit in residue_report(leaked_preview)}
+        self.assertIn("STREET", patterns)
+        self.assertIn("PLZ_CITY", patterns)
+
     def test_ambiguous_bare_address_is_tokenized(self) -> None:
         document = deidentify("Musterstraße 12\n10115 Berlin")
 
@@ -795,6 +818,8 @@ class Stage1Test(unittest.TestCase):
         self.assertIn("PERSON includes every named human", calls[0][1]["prompt"])
         self.assertIn("physicians", calls[0][1]["prompt"])
         self.assertIn("Dr. med.", calls[0][1]["prompt"])
+        self.assertIn("recipient block", calls[0][1]["prompt"])
+        self.assertIn("personal ADDRESS data", calls[0][1]["prompt"])
         self.assertIs(calls[0][1]["think"], False)
         self.assertEqual(calls[0][1]["options"], {"temperature": 0})
         self.assertEqual({call[2] for call in calls}, {321})

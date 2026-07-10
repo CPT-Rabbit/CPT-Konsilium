@@ -137,6 +137,8 @@ def _prompt(text: str) -> str:
         "Extract ALL personally identifying information from this medical text. "
         "PERSON includes every named human: patients, physicians, doctors (Dr., Dr. med., Prof.), "
         "nurses, relatives, contacts. "
+        "An address in a recipient block or immediately adjacent to a person name or person token is "
+        "personal ADDRESS data, not an institutional address; extract it. "
         "Extract proper names only; never generic role words like Eltern, Mutter, Patient. "
         "Return strict JSON only matching the provided schema. "
         "Allowed kinds: PERSON, ADDRESS, DOB, INSURANCE, EMAIL, PHONE. "

@@ -89,6 +89,12 @@
 - Unsafe metadata falls back to neutral ASCII slugs; missing document dates use the ingest date and record `date_source: ingest` in frontmatter.
 - Existing aggregate clinical files merge new structured entries, while the memory index retrieves the individual source documents.
 
+## 2026-07-10 - Recipient Address Precedence
+
+- Postal addresses in recipient blocks are private even when an institutional letterhead marker is nearby.
+- A patient token adjacent to an address prevents institutional retention unless the block is clearly an institutional affiliation.
+- The deterministic tokenizer and residue-gate exemption use the same recipient classification.
+
 ## 2026-07-09 - Public Snapshot Hygiene
 
 - Public releases are sanitized working-tree snapshots, not private history pushes.
