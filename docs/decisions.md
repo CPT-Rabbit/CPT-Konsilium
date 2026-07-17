@@ -3,17 +3,18 @@
 ## 2026-07-09 - De-ID Boundary
 
 - Regex de-ID remains for structured identifiers.
-- Free-text PII must go through a local Ollama detector before patient memory or model prompts.
-- `deidentification.ollama_model` is intentionally unset; the operator chooses it before real patient documents are allowed.
+- Free-text PII passes through local GLiNER NER plus an Ollama second opinion before patient memory or model prompts; detected entities are unioned.
+- Detector models are intentionally unset in the generic config; the operator chooses at least one local detector before real patient documents are allowed.
 - Date of birth is stored in the local vault and rendered in de-identified text as age.
 - Non-synthetic ingest is fail-closed: `runtime.allow_real_patient_docs=true`, a configured model and a reachable detector are required.
 
 ## 2026-07-09 - Architecture Scope
 
 - Konsilium stays a pipeline library now.
-- Do not add the full agent loop, skills, tool dispatcher or control HTTP+SSE during Stage 1/2.
-- Agent loop and scheduled autonomous monitoring move to Stage 3.
-- Stage 2 still needs real hybrid memory over canonical patient Markdown before continuing model reviews on larger histories.
+- The shipped boundary is a pipeline library with CLI and MCP surfaces, not a
+  general autonomous agent loop or control HTTP+SSE service.
+- Scheduled autonomous monitoring remains future work; patient-scoped hybrid
+  memory and multi-role reviews are implemented.
 
 ## 2026-07-09 - Patient Memory
 
@@ -39,7 +40,7 @@
 - Every ingest scans de-identified text for DOB, German street/PLZ, phone, long digit, KVNR and case-number residue before any patient-memory or vault write.
 - Each named residue pattern has a configurable `block`, `report` or `ignore` action; defaults block ingest and errors reveal only line numbers and pattern names.
 - `deid-preview` writes local preview, local vault and PII-free residue report under `previews/`; it does not structure, index or ingest the document.
-- The local Ollama detector uses overlapping text chunks and deduplicates entities across chunks; defaults are 900 characters with 150 character overlap.
+- Local GLiNER and Ollama detectors use overlapping text chunks and union deduplicated entities; defaults are 900 characters with 150 character overlap.
 
 ## 2026-07-10 - Address Policy
 
@@ -75,7 +76,27 @@
 - Six-digit case numbers following a DOB age in page footers are tokenized deterministically before detector output is applied.
 - Only generic institutional mailboxes may remain plain; person-named mailboxes are tokenized even on institutional domains.
 - OCR-spaced postal codes follow the same private/institutional context policy as ordinary postal codes.
-- `ingest --from-preview` is the only operator override for OCR residue: it accepts a locally edited `previews/preview-*.md`, reloads its preview vault, and must pass the full residue gate before any patient-memory write.
+- `ingest --from-preview` accepts only a locally edited
+  `previews/preview-*.md` and reloads its preview vault.
+- `--accept-residue` may downgrade explicitly named patterns to report-only for
+  that single reviewed ingest; the acceptance is persisted to the document
+  boundary and is never global configuration.
+
+## 2026-07-17 - Scoped Tokens, Templates, and Review Inbox
+
+- Numbered patient IDs scope identity tokens across documents; non-numeric IDs
+  retain the documented unscoped fallback.
+- The JSON identity vault remains machine-readable and a local Markdown token
+  ledger gives the operator one review surface.
+- Each stored source is rendered through the clinical document template with
+  metadata and sections; accepted residue names are recorded in frontmatter.
+- `preview-inbox` is an idempotent review-first pass over newly dropped files.
+
+## 2026-07-17 - DIN 5008 Letter Channels
+
+- Tokenized paper and e-mail drafts use separate DIN 5008 layouts.
+- Real identity substitution is deterministic, local, returned to stdout, and
+  never written back into patient memory.
 
 ## 2026-07-10 - Blocking Model Deadlines
 

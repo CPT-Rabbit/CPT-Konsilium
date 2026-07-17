@@ -36,8 +36,8 @@ PDF / text document
       ▼
 ┌───────────────────────────────┐
 │ Local de-identification       │  regex (structured identifiers)
-│                               │  + local LLM detector via Ollama
-│                               │    (free-text names, addresses)
+│                               │  + GLiNER NER (primary recall)
+│                               │  + Ollama (second opinion)
 └───────┬───────────────┬───────┘
         │               │
         ▼               ▼
@@ -70,8 +70,12 @@ PDF / text document
 
 - **Scope: German healthcare documents.** De-identification and document
   conventions are verified against German medical material only.
-- **Ingest pipeline**: PDF/text → local de-ID → model-structured Markdown
-  (timeline, problem list, medications, labs) per patient.
+- **Ingest pipeline**: PDF/text → local ensemble de-ID → templated Markdown
+  documents plus timeline, problem list, medications, and labs per patient.
+- **Review-first inbox**: `preview-inbox` de-identifies newly dropped files
+  idempotently before an operator admits a reviewed preview.
+- **Scoped identity tokens**: tokens are unique per numbered patient; a
+  local-only operator ledger lists token mappings beside the JSON vault.
 - **Patient-scoped hybrid memory**: embedded LanceDB index over canonical
   Markdown files (plain-JSON fallback), retrieval always filtered by patient.
   The memory is human-readable — open it in Obsidian or any editor to see
@@ -80,8 +84,8 @@ PDF / text document
   `roles/` — internist, endocrinologist, neurologist, add your own) gets an
   independent model pass; a chair-synthesis pass merges them and surfaces
   real disagreements instead of smoothing them over.
-- **Doctor letters in German**: tokenized drafts on disk, local-only PII
-  rendering.
+- **DIN 5008 doctor letters in German**: tokenized paper and e-mail drafts on
+  disk, with deterministic local-only PII rendering.
 - **Literature grounding**: PubMed (NCBI E-utilities) and Semantic Scholar
   search with the egress guard in front; AWMF guideline lookup.
 - **Monitoring**: periodic multi-patient review reports.
@@ -110,12 +114,14 @@ memory folders, Ollama on the host) and hardened server runbooks.
 
 ### De-identification model
 
-Install [Ollama](https://ollama.com), pull a model, and set it in config:
+Install the local detector dependencies, pull an
+[Ollama](https://ollama.com) model, and configure both ensemble layers:
 
 ```yaml
 deidentification:
+  gliner_model: "urchade/gliner_multi_pii-v1"
   ollama_url: "http://host.docker.internal:11434"
-  ollama_model: "<your-choice>"   # unset = real-document ingest stays blocked
+  ollama_model: "qwen3:4b"
 ```
 
 Ingest of real documents is deliberately blocked until a de-ID model is
@@ -134,14 +140,17 @@ konsilium() { docker run --rm -i \
   --env-file "$HOME/konsilium/secrets/konsilium.env" \
   konsilium --config /config/config.yaml "$@"; }
 
-konsilium ingest --patient case-1 --file /memory/inbox/befund.pdf
-konsilium deid-preview --file /memory/inbox/befund.pdf
+konsilium preview-inbox --patient case-1
+konsilium deid-preview --file /memory/inbox/befund.pdf --known-identity case-1
 konsilium ingest --patient case-1 --from-preview /memory/previews/preview-befund.md
+# After reviewing named non-PII residue patterns for this preview only:
+konsilium ingest --patient case-1 --from-preview /memory/previews/preview-befund.md \
+  --accept-residue DIGIT_RUN
 konsilium review --patient case-1 --roles internist,endocrinologist \
   --question "What should the next appointment clarify?"
-konsilium letter --patient case-1
+konsilium letter --patient case-1 --channel paper
 konsilium letter-render --patient case-1 \
-  --file patients/case-1/letters/doctor_letter_de.md   # PII to stdout only
+  --file patients/case-1/letters/doctor_letter_de_paper.md   # PII to stdout only
 konsilium memory-search --patient case-1 --query "HbA1c trend"
 konsilium monitor --patients case-1,case-2
 ```
@@ -182,6 +191,8 @@ memory/
     hypotheses/  consilium/  letters/   # reports & tokenized drafts
     strategy.md
   identity_vault/<id>.json   # local-only token→PII map
+  identity_vault/<id>.tokens.md  # local-only operator token ledger
+  inbox/  previews/          # review-first source queue and local artifacts
   lance/                     # embedded vector index
 ```
 
@@ -198,17 +209,16 @@ pip install -e ".[dev]"
 python -m pytest          # suite must pass with and without lancedb installed
 ```
 
-Design decisions are recorded in `docs/decisions.md`. Deliberate
-simplifications are marked with `ponytail:` comments naming the ceiling and
-the upgrade path.
+Design decisions and known implementation limits are recorded in
+`docs/decisions.md` and neutral engineering comments.
 
 ## Status & roadmap
 
-Early, actively developed. Working today: de-ID pipeline, PDF OCR, patient
-memory, consilium reviews, letters, knowledge tools, CLI, MCP server, Docker
-for local and server deployment. Planned: scheduled autonomous monitoring,
-guideline search integration, research-agent delegation for deep literature
-work.
+Early, actively developed. Working today: local ensemble de-ID, PDF OCR,
+review-first inbox previews, templated patient memory, consilium reviews,
+DIN 5008 letter channels, PubMed/Semantic Scholar/AWMF knowledge tools, CLI,
+MCP server, and Docker deployment. Planned: scheduled autonomous monitoring
+and research-agent delegation for deep literature work.
 
 ## License
 

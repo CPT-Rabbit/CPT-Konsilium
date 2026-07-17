@@ -20,12 +20,15 @@ class PatientMemory:
         self._table = None
 
     def sync(self) -> None:
-        # ponytail: full reindex; switch to source_sha256 incremental sync when patient history size makes this slow.
+        # Known limit: full reindex and reconcile. Switch to source_sha256-based
+        # incremental sync when patient history size makes this slow.
         records = self._records()
         if self._has_lancedb():
             table = self._lance_table()
-            for record in records:
-                table.delete(f"path = {_quote(record['path'])}")
+            # Drop every prior row (including rows for deleted documents) before
+            # re-adding the current set: a document removed from disk must not stay
+            # searchable — stale rows carry PHI and violate right-to-erasure.
+            table.delete("path != '__seed__'")
             if records:
                 table.add(records)
         self.index_path.write_text(json.dumps(records, ensure_ascii=False, indent=2) + "\n")
@@ -70,10 +73,13 @@ class PatientMemory:
         ]
 
     def get(self, path: str) -> str:
+        # Safety lives in the primitive, not the caller: reads are confined to the
+        # patients/ subtree, so the identity_vault/ (token->real-PII map) and any
+        # other sibling under root is unreachable through this method.
         resolved = (self.root / path).resolve()
-        root = self.root.resolve()
-        if resolved != root and root not in resolved.parents:
-            raise ValueError(f"path outside memory root: {path}")
+        docs_root = self.docs_root.resolve()
+        if docs_root not in resolved.parents:
+            raise ValueError(f"path outside patient memory: {path}")
         return resolved.read_text(encoding="utf-8")
 
     def _has_lancedb(self) -> bool:
@@ -139,4 +145,6 @@ def _placeholder() -> dict:
 
 
 def _quote(value: str) -> str:
-    return "'" + value.replace("'", "\\'") + "'"
+    # SQL-standard string literal escaping: double the quote. The patient_id feeds
+    # the isolation predicate, so correct escaping here is a safety boundary.
+    return "'" + value.replace("'", "''") + "'"

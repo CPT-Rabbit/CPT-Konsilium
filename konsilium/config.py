@@ -36,6 +36,7 @@ class RuntimeConfig:
 class DeidentificationConfig:
     ollama_url: str = "http://127.0.0.1:11434"
     ollama_model: str | None = None
+    gliner_model: str | None = None
     timeout_s: float = 300.0
     chunk_size: int = 900
     chunk_overlap: int = 150

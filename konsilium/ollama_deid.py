@@ -86,9 +86,6 @@ class OllamaPiiDetector:
             if isinstance(item, dict) and _valid_entity(item)
         ]
 
-    def healthcheck(self) -> None:
-        self("Detector reachability check.")
-
 
 def _fetch(url: str, payload: dict, timeout_s: float) -> str:
     request = Request(

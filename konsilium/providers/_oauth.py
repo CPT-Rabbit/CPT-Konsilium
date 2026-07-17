@@ -1,12 +1,11 @@
-"""M3 — Shared base for subscription OAuth providers (Grok, ChatGPT/Codex).
+"""Shared base for subscription OAuth providers (Grok, ChatGPT/Codex).
 
 A subscription = model access via an OAuth token, not an API key. A one-time
 PKCE login (outside the runtime, via a CLI tool) places access/refresh into auth.json; here
 is the runtime part: take the active token, refresh it via refresh_token on expiry,
 and on 401 rotate the pool entry.
 
-Reference pattern: `auxiliary_client` `xai-oauth`/`codex` branches + `_try_refresh_*_credentials`
-+ `CredentialPool`. Our implementation (standard OAuth2 refresh).
+Standard OAuth2 refresh over the shared credential pool.
 
 ⚠ Air-gap: subscription paths go NOT to the gateway but to the provider endpoint
 (inference + token refresh). These hosts must be added to the tinyproxy egress allowlist

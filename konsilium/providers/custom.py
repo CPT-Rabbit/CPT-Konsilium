@@ -1,9 +1,7 @@
-"""M3 — `custom` provider: Cloudflare / OpenAI-compatible.
+"""`custom` provider: Cloudflare / OpenAI-compatible.
 
 Use a base_url on an OpenAI-compatible `/compat` endpoint and a static env key.
 There is nothing to refresh, so on_auth_error returns False.
-
-Reference pattern: the `provider == "custom"` branch in `auxiliary_client.resolve_provider_client`.
 """
 
 from __future__ import annotations

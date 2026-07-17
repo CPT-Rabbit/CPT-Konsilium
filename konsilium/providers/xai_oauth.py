@@ -1,7 +1,7 @@
 """M3 — `xai-oauth` provider: Grok subscription (super Grok).
 
 A thin wrapper over OAuthProvider with xAI endpoints.
-Reference pattern: `XAI_OAUTH_CLIENT_ID`, `auth.x.ai`, `api.x.ai/v1` (hermes_cli/auth.py).
+Reference pattern: `XAI_OAUTH_CLIENT_ID`, `auth.x.ai`, `api.x.ai/v1`.
 """
 
 from __future__ import annotations

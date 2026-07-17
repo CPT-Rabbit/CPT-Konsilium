@@ -1,9 +1,9 @@
 """M3 — Credential store and pool.
 
-A minimal analog of Hermes `agent/credential_pool.py` + auth-store. We need little:
-hold per-provider entries (access/refresh/expires), serve the active one, rotate
-on exhaustion, repair (refresh) on expiry. PKCE login is done once
-outside the runtime (a CLI tool); tokens arrive here via auth.json.
+A minimal credential pool + auth-store. We need little: hold per-provider entries
+(access/refresh/expires), serve the active one, rotate on exhaustion, repair
+(refresh) on expiry. PKCE login is done once outside the runtime (a CLI tool);
+tokens arrive here via auth.json.
 
 Reference pattern: `PooledCredential` (provider/id/access_token/refresh_token/expires/
 priority/source) + `_is_expiring(expires_at, skew)`. Our implementation.

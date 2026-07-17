@@ -19,6 +19,7 @@ runtime:
 deidentification:
   ollama_url: "http://127.0.0.1:11434"
   ollama_model: null   # The operator chooses before real patient documents are allowed.
+  gliner_model: null   # e.g. "urchade/gliner_multi_pii-v1" — primary NER recall layer (pip install konsilium[ner]).
   timeout_s: 300.0
   chunk_size: 900
   chunk_overlap: 150

@@ -1,13 +1,10 @@
-"""M4/M5 — Model client: request assembly + call with OUR reliability control.
+"""Model client: request assembly + call with our own reliability control.
 
-The main lesson from dissecting Hermes: a provider can "hang" — send the first chunk
-and go silent. The default httpx timeout is huge (up to 1800s), so without our own
-**stale detector** the call hangs, piles into retries and kills the trading cycle (exactly
-the v0.15.1 regression). Here we control that ourselves: kill the call on a short silence
-threshold and retry with jittered backoff; on 401 — refresh/rotate via the provider.
-
-Reference pattern: `_interruptible_api_call` / `_interruptible_streaming_api_call`
-(stale detector) + `_build_api_kwargs` + `retry_utils.jittered_backoff`. Our code.
+A provider can "hang" — send the first chunk and go silent. The default httpx
+timeout is huge (up to 1800s), so without our own **stale detector** the call
+hangs, piles into retries and stalls the agent's control loop. Here we control
+that ourselves: kill the call on a short silence threshold and retry with
+jittered backoff; on 401 — refresh/rotate via the provider.
 """
 
 from __future__ import annotations
@@ -40,6 +37,11 @@ class ModelTimeout(Exception):
 
 class ModelBadRequest(Exception):
     """Provider rejected the assembled request; the loop may compact and retry once."""
+
+
+# Transient HTTP statuses worth retrying when surfaced as a bare APIStatusError
+# (408 Request Timeout is the gateway's recurring failure mode on long calls).
+_TRANSIENT_STATUS = {408, 409, 425, 500, 502, 503, 504}
 
 
 class ModelClient:
@@ -80,7 +82,7 @@ class ModelClient:
         api_messages = [{"role": "system", "content": system_prompt}, *messages]
         kwargs: dict[str, Any] = {
             "messages": api_messages,
-            "max_tokens": 4096 if json_mode else self.max_tokens,
+            "max_tokens": max(8192, self.max_tokens) if json_mode else self.max_tokens,
             "stream": False if json_mode else self.stream,
         }
         if json_mode:
@@ -153,6 +155,18 @@ class ModelClient:
                 raise error from e
             except (ModelTimeout, openai.APITimeoutError, openai.APIConnectionError,
                     openai.RateLimitError, openai.InternalServerError) as e:
+                last_exc = e
+                if attempt < self.max_retries:
+                    delay = min(self._retry_delay(attempt, e), max(0.0, deadline - time.monotonic()))
+                    if delay > 0:
+                        time.sleep(delay)
+                continue
+            except openai.APIStatusError as e:
+                # Transient gateway statuses (408 Request Timeout chief among them) are
+                # retryable; other status errors (403/404/422/...) are not.
+                if getattr(e, "status_code", None) not in _TRANSIENT_STATUS:
+                    self._emit_failure(e, call_started)
+                    raise
                 last_exc = e
                 if attempt < self.max_retries:
                     delay = min(self._retry_delay(attempt, e), max(0.0, deadline - time.monotonic()))

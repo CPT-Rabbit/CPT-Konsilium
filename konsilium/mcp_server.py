@@ -61,6 +61,7 @@ class KonsiliumOps:
             roles=_roles(roles),
             question=question,
             model_client=_model_client(self.config),
+            residue_policy=self.config.deidentification.residue,
         )
 
     def doctor_letter(self, patient_id: str) -> dict:
@@ -75,14 +76,10 @@ class KonsiliumOps:
         return PatientMemory(self.root).search(query, patient_id=patient_id)
 
     def memory_get(self, path: str) -> str:
-        resolved = (self.root / path).resolve()
-        root = self.root.resolve()
-        patients_root = (self.root / "patients").resolve()
-        if resolved == root or root not in resolved.parents:
-            raise ValueError(f"path outside memory root: {path}")
-        if resolved != patients_root and patients_root not in resolved.parents:
-            raise ValueError(f"MCP memory_get is limited to patient memory: {path}")
-        return resolved.read_text(encoding="utf-8")
+        from .memory import PatientMemory
+
+        # Single source of truth for the patients/-only guard lives in the primitive.
+        return PatientMemory(self.root).get(path)
 
     def monitor_review(self, patient_ids: list[str] | str) -> dict:
         from .monitor import monitor_review

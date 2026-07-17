@@ -41,10 +41,16 @@ DEFAULT_RESIDUE_POLICY = {
     "DOB_MARKER": "block",
     "EMAIL": "block",
     "PARTIAL_NAME": "block",
+    "NAME_CUE": "block",
+    "TOKEN_ADJACENT_NAME": "block",
 }
 
 _MIN_ENTITY_CHARS = 3
-_PROTECTED_SPAN = re.compile(r"\[[A-Z][A-Z_]*_\d+\]|\bage\s+\d{1,3}\b", re.I)
+# Optional per-patient scope prefix: tokens are [<patient>_<KIND>_<n>] once a
+# document joins a patient (e.g. [1_PATIENT_3]); unscoped [PATIENT_3] still
+# parses so previews, synthetic tests and the known-identity seed keep working.
+_SCOPE = r"(?:\d+_)?"
+_PROTECTED_SPAN = re.compile(rf"\[{_SCOPE}[A-Z][A-Z_]*_\d+\]|\bage\s+\d{{1,3}}\b", re.I)
 _STREET_SUFFIXES = r"straße|strasse|str\.?|weg|allee|platz|damm|ring|gasse|stieg|twiete|kamp|redder|chaussee|deich|brook|horst|wall|steig"
 _ADDRESS_MATERIAL = re.compile(
     rf"\b[A-Za-zÄÖÜäöüß.-]*(?i:(?:{_STREET_SUFFIXES}))\b|"
@@ -117,23 +123,36 @@ class ResidueError(RuntimeError):
         super().__init__(f"de-identification residue blocked ingest: {detail}")
 
 
+# Separator between a birth marker and the date: tolerates OCR junk such as
+# "am:", "\ - ", stray punctuation, without ever swallowing the date digits.
+_DOB_SEP = r"(?:\s*am)?[ \t:.,\\/*-]{0,6}\s*"
+
 _FIELD_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("PATIENT", re.compile(r"\b(?:Patient|Name|Patientin|Patient name):\s*([^\n,;]+)", re.I)),
     (
         "DOB",
         re.compile(
-            r"\b(?:DOB|Date of birth|Geboren(?:\s+am)?|Geburtsdatum|geb\s*\.?)\s*:?(?:\s+am)?\s*"
-            r"([0-9]{1,2}\s*[.,/-]\s*[0-9]{1,2}\s*[.,/-]\s*[0-9]{2,4}(?:\s+\d)?)",
+            r"\b(?:DOB|Date of birth|Geboren(?:\s+am)?|Geburtsdatum|geb\s*\.?)" + _DOB_SEP
+            + r"([0-9]{1,2}\s*[.,/-]\s*[0-9]{1,2}\s*[.,/-]\s*[0-9]{2,4}(?:\s+\d)?)",
             re.I,
         ),
     ),
     (
         "DOB",
         re.compile(
-            r"\b(?:Geburtsdatum|Geboren(?:\s+am)?|geb\s*\.?)\s*:?(?:\s+am)?[ \t]*"
-            r"((?:(?:Montag|Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag),?\s+)?"
+            r"\b(?:Geburtsdatum|Geboren(?:\s+am)?|geb\s*\.?)" + _DOB_SEP
+            + r"((?:(?:Montag|Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag),?\s+)?"
             r"[0-9]{1,2}\.\s*\S{2,16}\s+\d{4})",
             re.I,
+        ),
+    ),
+    # German "* born" convention: "*12.08.2015" / "* 12.08.2015" after a name.
+    # Requires full date separators, so gene/OMIM codes (OMIM*611386) never match.
+    (
+        "DOB",
+        re.compile(
+            r"(?<![\d.])\*[ \t]*"
+            r"([0-9]{1,2}\s*[.,/-]\s*[0-9]{1,2}\s*[.,/-]\s*[0-9]{2,4})(?!\d)"
         ),
     ),
     ("CASE_NUMBER", re.compile(r"\bage\s+\d{1,3}\s*,\s*(\d{6})\b", re.I)),
@@ -232,6 +251,18 @@ _RESIDUE_PATTERNS: dict[str, re.Pattern[str]] = {
         r"\b(?:Fall-Nr\.?|Fallnummer|Patienten-Nr\.?|Pat\.?\s*-?\s*Nr\.?|Aufn\.?\s*-?\s*Nr\.?)\s*:?\s*[A-Z0-9][A-Z0-9./-]{3,}",
         re.I,
     ),
+    # Deterministic name backstop: a person cue followed by an untokenized
+    # name-like word is treated as a missed PERSON, regardless of model recall.
+    # Known limit: cues are same-line only. Extend to a two-line window if
+    # documents show a cue at line end and the name on the next line.
+    "NAME_CUE": re.compile(
+        r"(?:\b(?:Dr|Prof|DR|PROF)\.?|\b(?:Chefarzt|Chefärztin|Oberarzt|Oberärztin|"
+        r"Assistenzarzt|Assistenzärztin|Frau|FRAU|Herrn?|HERRN?)|\b(?i:geehrte[rs]?)|(?:\bFr|\bHr|\bgez)\.)"
+        r"(?:[ \t]+(?i:med)\.?)?[ \t]+"
+        r"(?!(?i:Dr|Prof|Professor(?:in)?|med|Frau|Herrn?|Kollegin(?:nen)?|Kollegen?|Doktor|Damen|Herren)\b)"
+        r"(?!(?i:\w*(?:logie|iatrie|medizin|heilkunde|chirurgie|therapie))\b)"
+        r"(?:[A-ZÄÖÜ][a-zäöüß]{2,}|[A-ZÄÖÜ]{3,})"
+    ),
 }
 
 _INSTITUTION_MARKERS = re.compile(
@@ -246,11 +277,33 @@ _PRIVATE_ADDRESS_MARKERS = re.compile(
 _RECIPIENT_LINE = re.compile(r"^\s*(?:Frau|Herr|An|Empfänger|Empfaenger)\s*:?\s*$", re.I)
 _CONTACT_MARKER = re.compile(r"\b(?:Tel(?:efon)?|Fax)\.?\s*:?", re.I)
 _INSTITUTION_NUMBER_MARKER = re.compile(r"\b(?:Ust-?ID|IK-?Nr|IBAN)\b", re.I)
-_DOB_MARKER = re.compile(r"\b(?:Geburtsdatum\b|geb\s*\.?)", re.I)
+# Marker must be the "geb." abbreviation or full "Geburtsdatum" — not the "geb"
+# prefix of ordinary words (geboren, Geburt, gebracht, geben, Gebärden, ...).
+_DOB_MARKER = re.compile(r"\bGeburtsdatum\b|\bgeb\.", re.I)
 _PARTIAL_NAME = re.compile(
-    r"\[PATIENT_\d+\]\s+(?!(?:geb|geboren|Geburtsdatum|age)\b)\w{3,}",
+    rf"\[{_SCOPE}PATIENT_\d+\]\s+(?!(?:geb|geboren|Geburtsdatum|age)\b)\w{{3,}}",
     re.I,
 )
+# Swept born-convention ("*12.08.2015" -> "*age 10") next to an untokenized
+# capitalized word: the classic "Surname, Firstname *DOB" header shape.
+_SWEPT_BORN = re.compile(r"\*age\s+\d")
+_TOKEN_SPAN = re.compile(rf"\[{_SCOPE}[A-Z_]+_\d+\]")
+_CAP_WORD = re.compile(r"\b[A-ZÄÖÜ][A-Za-zäöüß-]{2,}\b")
+_TOKEN_NAME_INLINE = re.compile(rf"\[{_SCOPE}PATIENT_\d+\][;,]?[ \t]+[A-ZÄÖÜ][A-Za-zäöüß-]{{2,}}")
+_ROLE_LINE = re.compile(
+    r"^\s*(?:Fach(?:arzt|ärztin)|Arzt|Ärztin|Oberarzt|Oberärztin|Chefarzt|Chefärztin|Dr\.?|Prof\.?)\b",
+    re.I,
+)
+_OCR_GARBAGE = re.compile(r"[{}@#%&\\]")
+_BARE_TOKEN_LINE = re.compile(rf"^\s*\[{_SCOPE}(?:PATIENT|ADDR)_\d+\]\s*$")
+_LONE_CAP_LINE = re.compile(r"^\s*[A-ZÄÖÜ][A-Za-zäöüß-]{2,}\s*$")
+# Known limit: heading words and long unhyphenated compounds are excluded from
+# the lone-line rule to cut review noise; extend the set if false positives grow.
+_SECTION_HEADINGS = {
+    "diagnosen", "diagnose", "anamnese", "befund", "befunde", "medikation",
+    "epikrise", "beurteilung", "therapie", "labor", "verlauf", "zusammenfassung",
+    "empfehlung", "empfehlungen", "procedere", "nachrichtlich", "anlage", "anlagen",
+}
 
 
 def deidentify(
@@ -259,11 +312,13 @@ def deidentify(
     *,
     pii_detector: PiiDetector | None = None,
     today: date | None = None,
+    known_identity: dict[str, str] | None = None,
 ) -> DeidentifiedDocument:
     vault = dict(existing_vault or {})
     counts: dict[str, int] = _counts(vault)
     retained_emails: set[str] = set()
     rejected_entities: list[RejectedEntity] = []
+    dob_values: list[str] = []
     today = today or date.today()
 
     def token(kind: str, value: str) -> str:
@@ -278,9 +333,15 @@ def deidentify(
     clean = text
     for kind, pattern in _FIELD_PATTERNS:
         clean = pattern.sub(
-            lambda match: _replace_match(match, kind, token, today, retained_emails, rejected_entities),
+            lambda match: _replace_match(
+                match, kind, token, today, retained_emails, rejected_entities, dob_values
+            ),
             clean,
         )
+    # A confirmed birth date can reappear elsewhere (footer, "*12.08.2015" born
+    # convention) without a marker; redact those exact occurrences too.
+    for value in dob_values:
+        clean = _sweep_dob_date(clean, value, today)
     if pii_detector is not None:
         entities = []
         for entity in pii_detector(clean):
@@ -298,11 +359,21 @@ def deidentify(
         for kind, value in sorted(entities, key=lambda item: len(item[1]), reverse=True):
             clean = _replace_entity(clean, kind, value, token, today, retained_emails)
     for value in sorted(
-        (stored for key, stored in vault.items() if key.startswith("[PATIENT_") and _valid_entity_value(stored)),
+        (
+            stored
+            for key, stored in vault.items()
+            if _token_kind(key) == "PATIENT" and _valid_entity_value(stored)
+        ),
         key=len,
         reverse=True,
     ):
         clean = _replace_entity(clean, "PATIENT", value, token, today, retained_emails)
+
+    # Deterministic backstop: the patient's confirmed identity is redacted
+    # regardless of model recall on this document (case-insensitive, so ALLCAPS
+    # letterheads are covered too). Values never leave the host.
+    if known_identity:
+        clean = _sweep_known_identity(clean, known_identity, token, today, retained_emails)
 
     return DeidentifiedDocument(
         text=clean,
@@ -324,6 +395,7 @@ def residue_report(
             raise ValueError(f"invalid residue action for {name}: {action}")
     hits = []
     offset = 0
+    stripped_lines = text.splitlines()
     for line_number, raw_line in enumerate(text.splitlines(keepends=True), 1):
         line = raw_line.rstrip("\r\n")
         for name, pattern in _RESIDUE_PATTERNS.items():
@@ -335,11 +407,20 @@ def residue_report(
                 hits.append(ResidueHit(line_number, name, action))
         marker = _DOB_MARKER.search(line)
         marker_action = configured["DOB_MARKER"]
-        if marker_action != "ignore" and marker and not re.search(r"\bage\s+\d+\b", line[marker.end():marker.end() + 24], re.I):
+        window = line[marker.end():marker.end() + 24] if marker else ""
+        safe_after_marker = bool(
+            re.search(rf"\bage\s+\d+\b|\[{_SCOPE}DOB_", window, re.I)
+        )
+        if marker_action != "ignore" and marker and not safe_after_marker:
             hits.append(ResidueHit(line_number, "DOB_MARKER", marker_action))
         partial_action = configured["PARTIAL_NAME"]
-        if partial_action != "ignore" and marker and _PARTIAL_NAME.search(line):
+        if partial_action != "ignore" and (
+            (marker and _PARTIAL_NAME.search(line)) or _swept_born_name(line)
+        ):
             hits.append(ResidueHit(line_number, "PARTIAL_NAME", partial_action))
+        adjacent_action = configured["TOKEN_ADJACENT_NAME"]
+        if adjacent_action != "ignore" and _token_adjacent_name(stripped_lines, line_number - 1):
+            hits.append(ResidueHit(line_number, "TOKEN_ADJACENT_NAME", adjacent_action))
         offset += len(raw_line)
     if text.count("[") != text.count("]") and configured["CORRUPTED_TOKEN"] != "ignore":
         hits.append(ResidueHit(1, "CORRUPTED_TOKEN", configured["CORRUPTED_TOKEN"]))
@@ -359,6 +440,34 @@ def assert_no_blocking_residue(
     return hits
 
 
+def _swept_born_name(line: str) -> bool:
+    swept = _SWEPT_BORN.search(line)
+    if not swept:
+        return False
+    return bool(_CAP_WORD.search(_TOKEN_SPAN.sub("", line[:swept.start()])))
+
+
+def _token_adjacent_name(lines: list[str], index: int) -> bool:
+    """Untokenized name-like word glued to a PATIENT token: recipient blocks,
+    OCR-garbled headers, and 'firstname-token surname' clinician signatures."""
+    line = lines[index]
+    if _TOKEN_NAME_INLINE.search(line):
+        if len(_OCR_GARBAGE.findall(line)) >= 2:
+            return True
+        following = next((item for item in lines[index + 1:] if item.strip()), "")
+        if _ROLE_LINE.match(following):
+            return True
+    lone = _LONE_CAP_LINE.match(line)
+    if lone:
+        word = line.strip()
+        if word.lower() in _SECTION_HEADINGS or (len(word) >= 13 and "-" not in word):
+            return False
+        for neighbor in (index - 1, index + 1):
+            if 0 <= neighbor < len(lines) and _BARE_TOKEN_LINE.match(lines[neighbor]):
+                return True
+    return False
+
+
 def _replace_match(
     match: re.Match[str],
     kind: str,
@@ -366,6 +475,7 @@ def _replace_match(
     today: date,
     retained_emails: set[str],
     rejected_entities: list[RejectedEntity],
+    dob_values: list[str] | None = None,
 ) -> str:
     value = match.group(1).strip()
     if "\n" in value or "\r" in value:
@@ -376,13 +486,54 @@ def _replace_match(
             retained_emails.add(value)
         return match.group(0)
     replacement = _entity_replacement(kind, value, token, today)
+    if kind == "DOB" and dob_values is not None and replacement.startswith("age "):
+        dob_values.append(value)
     return match.group(0).replace(match.group(1), replacement)
 
 
-def _replace_entity(text: str, kind: str, value: str, token, today: date, retained_emails: set[str]) -> str:
+def _token_kind(token_name: str) -> str:
+    match = re.match(rf"\[{_SCOPE}([A-Z_]+)_\d+\]", token_name.strip())
+    return match.group(1) if match else "PATIENT"
+
+
+def _sweep_known_identity(
+    text: str, known: dict[str, str], token, today: date, retained_emails: set[str]
+) -> str:
+    for token_name, value in sorted(known.items(), key=lambda kv: len(str(kv[1])), reverse=True):
+        value = str(value).strip()
+        if not value or "\n" in value or "\r" in value:
+            continue
+        kind = _token_kind(token_name)
+        if kind == "DOB":
+            text = _sweep_dob_date(text, value, today)
+        elif kind in {"PATIENT", "ADDR", "INSURANCE", "CASE_NUMBER", "EMAIL", "PHONE"}:
+            if not _valid_entity_value(value):
+                continue
+            text = _replace_entity(text, kind, value, token, today, retained_emails, flags=re.IGNORECASE)
+    return text
+
+
+def _sweep_dob_date(text: str, value: str, today: date) -> str:
+    """Replace every remaining occurrence of a confirmed birth date with the age,
+    covering the "*DATE" born convention and OCR spacing. Only the exact
+    day/month/year is targeted, so medical event dates are never touched."""
+    try:
+        day, month, year = _parse_dob(value)
+        age = _age(value, today)
+    except (IndexError, ValueError):
+        return text
+    pattern = re.compile(
+        rf"\*?\s*0?{day}\s*[.,/-]\s*0?{month}\s*[.,/-]\s*(?:{year}|{year % 100:02d})\b"
+    )
+    return pattern.sub(f"age {age}", text)
+
+
+def _replace_entity(
+    text: str, kind: str, value: str, token, today: date, retained_emails: set[str], flags: int = 0
+) -> str:
     if "\n" in value or "\r" in value:
         return text
-    pattern = re.compile(rf"(?<!\w){re.escape(value)}(?!\w)")
+    pattern = re.compile(rf"(?<!\w){re.escape(value)}(?!\w)", flags)
     parts = []
     start = 0
     for protected in _PROTECTED_SPAN.finditer(text):
@@ -513,7 +664,7 @@ def _patient_linked_place(value: str, text: str) -> bool:
     for match in pattern.finditer(text):
         line = _line_at(text, match.start())
         if re.search(
-            r"(?:\[PATIENT_\d+\]|\bPatient(?:in)?\b).{0,80}"
+            rf"(?:\[{_SCOPE}PATIENT_\d+\]|\bPatient(?:in)?\b).{{0,80}}"
             r"(?:wohnt|wohnhaft|lebt|Wohnort|Wohnsitz).{0,80}$|"
             r"\b(?:Wohnort|Wohnsitz|wohnhaft)\s*:?[^\n]*$",
             line,
@@ -559,7 +710,7 @@ def _is_recipient_address(lines: list[str], line_index: int) -> bool:
     if any(_RECIPIENT_LINE.fullmatch(line) for line in preceding):
         return True
     adjacent = "\n".join(lines[max(0, line_index - 2):line_index + 1])
-    if not re.search(r"\[PATIENT_\d+\]", adjacent):
+    if not re.search(rf"\[{_SCOPE}PATIENT_\d+\]", adjacent):
         return False
     affiliation = "\n".join(lines[max(0, line_index - 4):line_index + 1])
     return not _INSTITUTION_MARKERS.search(affiliation)
@@ -603,7 +754,10 @@ def _email_at(text: str, position: int) -> str:
 def _age(value: str, today: date) -> int:
     day, month, year = _parse_dob(value)
     birthday_passed = (today.month, today.day) >= (month, day)
-    return today.year - year - (0 if birthday_passed else 1)
+    age = today.year - year - (0 if birthday_passed else 1)
+    if not 0 <= age <= 120:
+        raise ValueError(f"implausible age {age} from {value!r}")
+    return age
 
 
 def _parse_dob(value: str) -> tuple[int, int, int]:
@@ -639,7 +793,7 @@ def _normal_kind(kind: str) -> str:
 def _counts(vault: dict[str, str]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for key in vault:
-        match = re.fullmatch(r"\[([A-Z_]+)_(\d+)\]", key)
+        match = re.fullmatch(rf"\[{_SCOPE}([A-Z_]+)_(\d+)\]", key)
         if match:
             counts[match.group(1)] = max(counts.get(match.group(1), 0), int(match.group(2)))
     return counts

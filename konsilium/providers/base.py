@@ -1,12 +1,10 @@
-"""M3 — Model providers: generic interface.
+"""Model providers: generic interface.
 
-Hermes node #2 (`auxiliary_client.resolve_provider_client`) is a big
-if/elif over the `provider` string. We fold it into one pattern: each provider
-can yield (base_url, creds) and build an OpenAI-compatible client; rotation/refresh
-live in the pool. A new subscription = one more Provider, no loop changes.
+Instead of one big if/elif over the `provider` string, each provider folds into
+one pattern: yield (base_url, creds) and build an OpenAI-compatible client;
+rotation/refresh live in the credential pool. A new subscription = one more
+Provider, no loop changes.
 
-Reference pattern: `agent/auxiliary_client.py::resolve_provider_client`,
-`agent/credential_pool.py` (CredentialPool/PooledCredential, refresh-on-401).
 Concrete implementations: providers/custom.py, providers/xai_oauth.py, providers/codex.py.
 """
 

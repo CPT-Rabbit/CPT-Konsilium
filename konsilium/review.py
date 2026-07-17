@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .deid import assert_no_blocking_residue, institutional_email_allowlist
 from .knowledge import SearchResult, guidelines_lookup
 from .memory import PatientMemory
 from .roles import load_role_profiles
@@ -25,6 +27,7 @@ def case_review(
     knowledge: list[SearchResult] | None = None,
     model_client=None,
     roles_dir: str | Path = "roles",
+    residue_policy: dict[str, str] | None = None,
 ) -> dict:
     root = Path(root)
     patient_dir = root / "patients" / patient_id
@@ -43,6 +46,7 @@ def case_review(
                 evidence,
                 external,
                 role_profiles,
+                residue_policy=residue_policy,
             )
         except Exception as error:  # noqa: BLE001 - model path must not break local review
             report = _deterministic_report(
@@ -110,8 +114,13 @@ def _model_report(
     evidence: list[dict],
     external: list[SearchResult],
     role_profiles: dict[str, dict],
+    residue_policy: dict[str, str] | None = None,
 ) -> dict:
     memory = _patient_memory(patient_dir, patient_id, question or _first_problem(patient_dir))
+    # Send-boundary safety: the ingest gate is the primary control, but re-check the
+    # assembled patient bodies before they leave the host for the model. Symmetric with
+    # the knowledge-query egress guard; fail-closed if de-id ever regressed upstream.
+    _assert_model_egress_safe(memory, residue_policy)
     external_evidence = [item.to_dict() for item in external]
     perspectives = {}
     for role in selected_roles:
@@ -168,7 +177,9 @@ def _model_report(
         (
             "Chair synthesis. Return strict JSON with chair_summary, claims, "
             "open_questions, disagreements, and recommended_next_step. "
-            "Disagreements must reflect actual divergence between role outputs; use [] if none."
+            "Each disagreement must name the specific diverging roles (e.g. "
+            "'internist vs endocrinologist: ...') and reflect actual divergence "
+            "between their outputs; use [] if none."
         ),
     )
     claims = chair.get("claims") or [
@@ -182,6 +193,7 @@ def _model_report(
         raise ValueError("model chair response has invalid report fields")
     if not isinstance(disagreements, list):
         raise ValueError("model chair response has invalid disagreements")
+    disagreements = _ground_disagreements(disagreements, perspectives)
     return {
         "artifact_type": "consilium_report",
         "patient_id": patient_id,
@@ -238,6 +250,45 @@ def _patient_memory(patient_dir: Path, patient_id: str, query: str) -> dict[str,
     memory = PatientMemory(root)
     hits = memory.search(query, patient_id=patient_id, limit=5)
     return {hit["path"]: memory.get(hit["path"]) for hit in hits}
+
+
+def _assert_model_egress_safe(memory: dict[str, str], residue_policy: dict[str, str] | None = None) -> None:
+    for text in memory.values():
+        policy = dict(residue_policy or {})
+        # Operator-reviewed acceptance recorded at ingest travels in the document
+        # frontmatter and applies to that document only.
+        policy.update({name: "report" for name in _accepted_residue(text)})
+        assert_no_blocking_residue(
+            text, policy, retained_institutional_emails=institutional_email_allowlist(text)
+        )
+
+
+def _accepted_residue(text: str) -> list[str]:
+    match = re.search(r'^accepted_residue: (\[.*\])$', text, re.MULTILINE)
+    if not match:
+        return []
+    try:
+        accepted = json.loads(match.group(1))
+    except ValueError:
+        return []
+    return [str(name).upper() for name in accepted if isinstance(name, str)]
+
+
+def _ground_disagreements(disagreements: list, perspectives: dict[str, dict]) -> list[str]:
+    """Keep only disagreements attributable to >=2 roles that actually produced
+    claims. The chair's disagreement prose is otherwise ungrounded: a sycophantic
+    chair drops real divergence (nothing we can recover) and a hallucinating one
+    invents it — this drops the invented ones by requiring real contributors.
+    An attribution floor, not a proof that the named roles' claims truly conflict.
+    """
+    contributing = [role for role, view in perspectives.items() if view.get("claims")]
+    grounded = []
+    for item in disagreements:
+        text = str(item)
+        named = {role for role in contributing if re.search(rf"\b{re.escape(role)}\b", text, re.IGNORECASE)}
+        if len(named) >= 2:
+            grounded.append(text)
+    return grounded
 
 
 def _patient_evidence(patient_dir: Path) -> list[dict]:

@@ -2,7 +2,7 @@
 
 A thin wrapper over OAuthProvider with OpenAI/Codex endpoints.
 Reference pattern: ProviderConfig `openai-codex`, `auth.openai.com/oauth/token`,
-`chatgpt.com/backend` (hermes_cli/auth.py).
+`chatgpt.com/backend`.
 """
 
 from __future__ import annotations

@@ -66,7 +66,15 @@ PDF ingest handles text-layer and scanned pages locally. The image includes
 `ocrmypdf` plus Tesseract `deu` and `eng`; no cloud OCR is used. If OCR is
 needed but unavailable, ingest fails before writing an empty document.
 
-Run a preview before admitting a new real document source:
+Create review previews for every newly dropped inbox document (re-runs skip
+files that already have a preview):
+
+```sh
+docker compose -f docker-compose.mac.yml run --rm konsilium \
+  --config /config/config.yaml preview-inbox --patient case-1
+```
+
+Or preview one document explicitly:
 
 ```sh
 docker compose -f docker-compose.mac.yml run --rm konsilium \
@@ -92,7 +100,16 @@ docker compose -f docker-compose.mac.yml run --rm konsilium \
 
 The command accepts only files under `memory/previews/`, loads the neighboring
 `.vault.json`, and runs the residue gate again before structuring or memory
-writes. There is no flag that bypasses the gate.
+writes. If a named residue pattern was inspected and confirmed non-PII, the
+operator may downgrade that pattern to report-only for this single reviewed
+preview; this cannot be configured globally:
+
+```sh
+docker compose -f docker-compose.mac.yml run --rm konsilium \
+  --config /config/config.yaml ingest --patient case-1 \
+  --from-preview /memory/previews/preview-befund.md \
+  --accept-residue DIGIT_RUN
+```
 
 Synthetic operator flow:
 
@@ -108,10 +125,10 @@ docker compose -f docker-compose.mac.yml run --rm konsilium \
 docker compose -f docker-compose.mac.yml run --rm konsilium \
   --config /config/config.yaml review --patient cli-smoke --roles internist,endocrinologist
 docker compose -f docker-compose.mac.yml run --rm konsilium \
-  --config /config/config.yaml letter --patient cli-smoke
+  --config /config/config.yaml letter --patient cli-smoke --channel paper
 docker compose -f docker-compose.mac.yml run --rm konsilium \
   --config /config/config.yaml letter-render --patient cli-smoke \
-  --file /memory/patients/cli-smoke/letters/doctor_letter_de.md
+  --file /memory/patients/cli-smoke/letters/doctor_letter_de_paper.md
 docker compose -f docker-compose.mac.yml run --rm konsilium \
   --config /config/config.yaml memory-search --patient cli-smoke --query "HbA1c diabetes"
 ```
@@ -226,18 +243,20 @@ docker compose -f docker-compose.mac.yml run --rm konsilium --config /config/con
 No MCP inference bridge is used. MCP remains for tools, not for sourcing model
 completions from native apps.
 
-Ollama for de-identification runs natively on the Mac host. Container config must
-use:
+GLiNER provides the primary local NER recall layer; Ollama runs natively on the
+Mac host as a second opinion. Container config must use:
 
 ```yaml
 deidentification:
+  gliner_model: "urchade/gliner_multi_pii-v1"
   ollama_url: "http://host.docker.internal:11434"
-  ollama_model: "gemma3:4b"
+  ollama_model: "qwen3:4b"
   timeout_s: 300.0
 ```
 
-The generic server example keeps `ollama_model` unset; the Mac example uses
-`gemma3:4b` for the local PII detector.
+The generic server example keeps both detector models unset; the Mac example
+uses GLiNER plus `qwen3:4b`. Install the `ner` optional dependency when GLiNER
+is enabled.
 
 Docker Desktop has no app-server `DOCKER-USER` firewall equivalent. Mac-side
 controls are the code egress guard, tokens-only memory, and provider config

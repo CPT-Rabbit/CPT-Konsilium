@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
@@ -24,7 +25,7 @@ from konsilium import (
 )
 from konsilium.config import Config
 from konsilium.deid import PiiEntity
-from konsilium.ingest import _ollama_detector, extract_text_with_stats
+from konsilium.ingest import _build_detector, extract_text_with_stats
 from konsilium.memory import PatientMemory
 from konsilium.ollama_deid import OllamaPiiDetector
 
@@ -140,7 +141,7 @@ class Stage1Test(unittest.TestCase):
             "Klinikum Musterstadt",
             "Frau",
             "Erika Beispiel",
-            "Striepenweg 41",
+            "Musterstieg 41",
             "21147 Hamburg",
         ])
         document = deidentify(
@@ -149,7 +150,7 @@ class Stage1Test(unittest.TestCase):
         )
 
         self.assertNotIn("Erika Beispiel", document.text)
-        self.assertNotIn("Striepenweg 41", document.text)
+        self.assertNotIn("Musterstieg 41", document.text)
         self.assertNotIn("21147 Hamburg", document.text)
         self.assertRegex(document.text, r"\[ADDR_\d+\]")
 
@@ -217,7 +218,7 @@ class Stage1Test(unittest.TestCase):
 
     def test_model_patient_email_phone_entities_require_kind_evidence(self) -> None:
         source = "\n".join([
-            "WILHELMSTIFT Katholisches Kinderkrankenhaus gGmbH",
+            "MUSTERSTIFT Katholisches Kinderkrankenhaus gGmbH",
             "Nachweis zweier Rolandofoki.",
             "Rolandofoki ohne Auffälligkeit.",
             "ftp-Filter: 0,53 Hz",
@@ -241,7 +242,7 @@ class Stage1Test(unittest.TestCase):
             ],
         )
 
-        self.assertIn("WILHELMSTIFT Katholisches Kinderkrankenhaus gGmbH", document.text)
+        self.assertIn("MUSTERSTIFT Katholisches Kinderkrankenhaus gGmbH", document.text)
         self.assertIn("Nachweis zweier Rolandofoki.", document.text)
         self.assertIn("Rolandofoki ohne Auffälligkeit.", document.text)
         self.assertIn("ftp-Filter: 0,53 Hz", document.text)
@@ -269,32 +270,32 @@ class Stage1Test(unittest.TestCase):
             pii_detector=lambda text: [PiiEntity("ADDRESS", "Hamburg")],
         )
         residence_document = deidentify(
-            "[PATIENT_1] lebt auf Rügen.",
-            pii_detector=lambda text: [PiiEntity("ADDRESS", "Rügen")],
+            "[PATIENT_1] lebt auf Musterland.",
+            pii_detector=lambda text: [PiiEntity("ADDRESS", "Musterland")],
         )
 
         self.assertEqual(institution_document.text, institutional)
-        self.assertNotIn("Rügen", residence_document.text)
+        self.assertNotIn("Musterland", residence_document.text)
         self.assertIn("[ADDR_1]", residence_document.text)
 
     def test_letterhead_compound_place_keeps_letter_date_and_is_context_consistent(self) -> None:
         source = "\n".join([
-            "Hohenhorst/ Rügen, 01.04.2019",
+            "Musterhorst/ Musterland, 01.04.2019",
             "Epikrise vom 01.04.2019",
-            "[PATIENT_1] lebt auf Rügen.",
-            "geb. 19.07.2015",
+            "[PATIENT_1] lebt auf Musterland.",
+            "geb. 12.08.2015",
         ])
         document = deidentify(
             source,
             pii_detector=lambda text: [
-                PiiEntity("ADDRESS", "Hohenhorst"),
-                PiiEntity("ADDRESS", "Rügen"),
+                PiiEntity("ADDRESS", "Musterhorst"),
+                PiiEntity("ADDRESS", "Musterland"),
                 PiiEntity("DOB", "01.04.2019"),
             ],
             today=date(2026, 7, 10),
         )
 
-        self.assertIn("Hohenhorst/ Rügen, 01.04.2019", document.text)
+        self.assertIn("Musterhorst/ Musterland, 01.04.2019", document.text)
         self.assertIn("Epikrise vom 01.04.2019", document.text)
         self.assertIn("[PATIENT_1] lebt auf [ADDR_1].", document.text)
         self.assertIn("geb. age 10", document.text)
@@ -376,8 +377,8 @@ class Stage1Test(unittest.TestCase):
                 [
                     "Patienten Mueller,",
                     "Seite 1 von 2, Mueller,",
-                    "Geburtsdatum Sonntag, 19. Juli 2015",
-                    "geb. 19.07.201 5",
+                    "Geburtsdatum Sonntag, 26. Juli 2016",
+                    "geb. 12.08.201 5",
                     "wohnhaft: Feldstieg 7",
                     "Musterstr. 8",
                     "Pat. Nr. 12345678",
@@ -386,7 +387,7 @@ class Stage1Test(unittest.TestCase):
             )
         )
 
-        for value in ("Mueller", "Sonntag, 19. Juli 2015", "19.07.201 5", "Feldstieg 7", "Musterstr. 8", "12345678", "A1234567"):
+        for value in ("Mueller", "Sonntag, 26. Juli 2016", "12.08.201 5", "Feldstieg 7", "Musterstr. 8", "12345678", "A1234567"):
             self.assertNotIn(value, document.text)
         self.assertEqual(document.text.count("[PATIENT_1]"), 2)
         self.assertGreaterEqual(document.text.count("age "), 2)
@@ -396,7 +397,7 @@ class Stage1Test(unittest.TestCase):
         )
 
     def test_footer_case_number_after_split_year_dob_is_tokenized_before_detector(self) -> None:
-        header = "Seite 2 von 4, Mustermann, Erika geb. am 19.07.201 5, 123456"
+        header = "Seite 2 von 4, Mustermann, Erika geb. am 12.08.201 5, 123456"
 
         def detector(text):
             self.assertEqual(
@@ -417,35 +418,102 @@ class Stage1Test(unittest.TestCase):
         self.assertIn("[PATIENT_1], [PATIENT_2] geb. am age 10, [CASE_NUMBER_1]", document.text)
         self.assertNotIn("age [DOB_", document.text)
         self.assertNotIn("[DOB_", document.text)
-        self.assertIn("19.07.201 5", document.vault.values())
+        self.assertIn("12.08.201 5", document.vault.values())
         self.assertEqual(residue_report(document.text), [])
 
     def test_ocr_month_dob_is_age_converted_with_only_partial_name_residue(self) -> None:
-        source = "09.09.2025 21:29:03 [PATIENT_1] larosiav, Geburtsdatum Sonntag, 19. JuËI 2015"
+        source = "09.09.2025 21:29:03 [PATIENT_1] maxxim, Geburtsdatum Sonntag, 26. JuËI 2016"
         document = deidentify(source, today=date(2026, 7, 10))
 
-        self.assertIn("Geburtsdatum age 10", document.text)
-        self.assertNotIn("Sonntag, 19. JuËI 2015", document.text)
+        self.assertIn("Geburtsdatum age 9", document.text)
+        self.assertNotIn("Sonntag, 26. JuËI 2016", document.text)
         self.assertNotIn("[DOB_", document.text)
-        self.assertIn("Sonntag, 19. JuËI 2015", document.vault.values())
+        self.assertIn("Sonntag, 26. JuËI 2016", document.vault.values())
         self.assertEqual({hit.pattern for hit in residue_report(document.text)}, {"PARTIAL_NAME"})
 
     def test_detector_sourced_dob_uses_age_conversion(self) -> None:
         document = deidentify(
-            "Geburtsdatum ist 19.07.2015",
-            pii_detector=lambda text: [PiiEntity("DOB", "19.07.2015")],
+            "Geburtsdatum ist 12.08.2015",
+            pii_detector=lambda text: [PiiEntity("DOB", "12.08.2015")],
             today=date(2026, 7, 10),
         )
 
         self.assertEqual(document.text, "Geburtsdatum ist age 10")
         self.assertNotIn("[DOB_", document.text)
-        self.assertIn("19.07.2015", document.vault.values())
+        self.assertIn("12.08.2015", document.vault.values())
         self.assertEqual(residue_report(document.text), [])
 
-    def test_compact_physician_names_are_tokenized(self) -> None:
-        document = deidentify("Dr. B.Püst\nDr. B.Kohl\nFrau Dr. Preuße")
+    def test_ocr_dob_separators_are_age_converted(self) -> None:
+        # OCR junk between the marker and the date must not defeat conversion.
+        for source in (
+            "Medikationsplan fuer: Max geb. am: 12.08.2015",
+            "Geburtsdatum: \\ - 12.08.2015",
+        ):
+            document = deidentify(source, today=date(2026, 7, 10))
+            self.assertIn("age 10", document.text)
+            self.assertNotIn("12.08.2015", document.text)
+            self.assertEqual(residue_report(document.text), [])
 
-        for value in ("Dr. B.Püst", "Dr. B.Kohl", "Frau Dr. Preuße"):
+    def test_born_asterisk_date_is_age_converted(self) -> None:
+        document = deidentify("Beispiel, Maximilian *12.08.2015, M", today=date(2026, 7, 10))
+        self.assertIn("age 10", document.text)
+        self.assertNotIn("12.08.2015", document.text)
+
+    def test_born_asterisk_does_not_touch_gene_codes(self) -> None:
+        source = "ADNP (OMIM*611386, NM_015339)"
+        self.assertEqual(deidentify(source, today=date(2026, 7, 10)).text, source)
+
+    def test_confirmed_dob_is_swept_from_footer(self) -> None:
+        source = "Geburtsdatum 12.08.2015\nSeite 2, *12.08.2015 Nr."
+        document = deidentify(source, today=date(2026, 7, 10))
+        self.assertNotIn("12.08.2015", document.text)
+        self.assertEqual(document.text.count("age 10"), 2)
+
+    def test_implausible_age_falls_back_to_token(self) -> None:
+        # Garbled OCR date must never emit "age -181281"; it stays tokenized.
+        document = deidentify("geb. 18.12.812023", today=date(2026, 7, 10))
+        self.assertNotIn("age -", document.text)
+        self.assertIn("[DOB_", document.text)
+
+    def test_dob_marker_ignores_geb_prefixed_words(self) -> None:
+        narrative = "Gebaeude gebaut, Gebaerden gebraucht, 2018 geboren, gebuehrenpflichtig."
+        self.assertNotIn("DOB_MARKER", {hit.pattern for hit in residue_report(narrative)})
+
+    def test_dob_marker_still_catches_residual_geb_abbreviation(self) -> None:
+        residual = "Patient [PATIENT_1], geb. 12.08.2015 unbehandelt"
+        self.assertIn("DOB_MARKER", {hit.pattern for hit in residue_report(residual)})
+
+    def test_dob_token_after_marker_is_not_residue(self) -> None:
+        safe = "Beispiel, Geburtsdatum [DOB_2]"
+        self.assertNotIn("DOB_MARKER", {hit.pattern for hit in residue_report(safe)})
+
+    def test_known_identity_backstops_missed_name(self) -> None:
+        # Model recall is irrelevant here (no detector); the confirmed identity
+        # is still redacted, case-insensitively across an ALLCAPS letterhead.
+        text = "Betr. Erik Muster, Diagnose.\nDR. MED. MUSTER\nErik wurde vorgestellt."
+        document = deidentify(
+            text,
+            known_identity={"[PATIENT_1]": "Erik Muster", "[PATIENT_2]": "Muster", "[PATIENT_3]": "Erik"},
+            today=date(2026, 7, 10),
+        )
+        self.assertNotIn("Erik", document.text)
+        self.assertNotIn("Muster", document.text)
+        self.assertNotIn("MUSTER", document.text)
+        self.assertIn("[PATIENT_", document.text)
+
+    def test_known_identity_backstops_bare_dob(self) -> None:
+        document = deidentify(
+            "Betr. Erik Muster, 12.08.2015",
+            known_identity={"[DOB_1]": "12.08.2015"},
+            today=date(2026, 7, 10),
+        )
+        self.assertNotIn("12.08.2015", document.text)
+        self.assertIn("age 10", document.text)
+
+    def test_compact_physician_names_are_tokenized(self) -> None:
+        document = deidentify("Dr. B.Wolf\nDr. B.Lang\nFrau Dr. Beispiel")
+
+        for value in ("Dr. B.Wolf", "Dr. B.Lang", "Frau Dr. Beispiel"):
             self.assertNotIn(value, document.text)
         self.assertEqual(document.text.count("[PATIENT_"), 3)
 
@@ -469,8 +537,8 @@ class Stage1Test(unittest.TestCase):
         )
         self.assertIn("EMAIL", {hit.pattern for hit in residue_report("raw@mail.de")})
 
-        named = deidentify("Klinik Musterstadt\n.pferner@aktion-sennenschein-greifswald de")
-        self.assertNotIn(".pferner@aktion-sennenschein-greifswald de", named.text)
+        named = deidentify("Klinik Musterstadt\n.mmuster@klinikurn-musterstadt de")
+        self.assertNotIn(".mmuster@klinikurn-musterstadt de", named.text)
         self.assertEqual(named.retained_institutional_emails, ())
 
     def test_partial_name_next_to_patient_token_on_dob_line_blocks(self) -> None:
@@ -482,6 +550,136 @@ class Stage1Test(unittest.TestCase):
         self.assertNotIn(
             "PARTIAL_NAME",
             {hit.pattern for hit in residue_report("[PATIENT_5] wurde heute untersucht")},
+        )
+
+    def test_untokenized_name_after_person_cue_blocks(self) -> None:
+        for leaked in (
+            "Sehr geehrter Herr Weber,",
+            "Vorstellung bei Oberärztin Meier.",
+            "Befund von Dr. med. Anna Weber",
+            "FRAU MUSTERMANN",
+            "gez. Weber",
+            "Hr. Müller-Lüdenscheidt wurde vorgestellt",
+        ):
+            self.assertIn("NAME_CUE", {hit.pattern for hit in residue_report(leaked)}, leaked)
+        for clean in (
+            "Sehr geehrte Frau Kollegin,",
+            "Sehr geehrte Damen und Herren,",
+            "Frau Dr. med. [PATIENT_1] berichtet.",
+            "Herrn [PATIENT_2] geht es gut.",
+            "Termin am Fr. um 10 Uhr",
+            "Sehr geehrter Herr Professor,",
+            "gez. [PATIENT_3]",
+        ):
+            self.assertNotIn("NAME_CUE", {hit.pattern for hit in residue_report(clean)}, clean)
+
+    def test_greeting_without_frau_herr_blocks_untokenized_name(self) -> None:
+        self.assertIn("NAME_CUE", {hit.pattern for hit in residue_report("Sehr geehrte Weber Kollegin,")})
+        self.assertNotIn("NAME_CUE", {hit.pattern for hit in residue_report("Sehr geehrte Frau Kollegin,")})
+
+    def test_swept_born_header_with_untokenized_name_blocks(self) -> None:
+        self.assertIn("PARTIAL_NAME", {hit.pattern for hit in residue_report("Weber, maxximilian *age 10 männl.")})
+        self.assertNotIn(
+            "PARTIAL_NAME",
+            {hit.pattern for hit in residue_report("[PATIENT_1], [PATIENT_2] *age 10 männl.")},
+        )
+
+    def test_token_adjacent_untokenized_name_blocks(self) -> None:
+        signature = "[PATIENT_3] Weber\nFachärztin für Kinder- und Jugendmedizin"
+        garbled = "EEG-Befund @{ [PATIENT_6]; Weber w#t&ia%}}}1 09.09.2025"
+        recipient = "Weber\n[PATIENT_3]\n[ADDR_1]"
+        for leaked in (signature, garbled, recipient):
+            self.assertIn("TOKEN_ADJACENT_NAME", {hit.pattern for hit in residue_report(leaked)}, leaked)
+        for clean in (
+            "[PATIENT_1] Anfälle traten erneut auf",
+            "Anamnese\n[PATIENT_1] stellte sich vor",
+            "bei [PATIENT_2] Epilepsie",
+        ):
+            self.assertNotIn(
+                "TOKEN_ADJACENT_NAME", {hit.pattern for hit in residue_report(clean)}, clean
+            )
+
+    def test_preview_tokens_reconcile_against_patient_vault(self) -> None:
+        from konsilium.ingest import _reconcile_preview_tokens
+
+        existing = {"[PATIENT_1]": "Anna Weber", "[PATIENT_2]": "Erika Beispiel", "[DOB_1]": "12.03.2015"}
+        preview = {
+            "[PATIENT_1]": "Anna Weber",       # same person, same token -> kept
+            "[PATIENT_2]": "Max Beispiel",     # collision -> next free index
+            "[PATIENT_3]": "Erika Beispiel",   # same person, new number -> existing token
+            "[DOB_1]": "12.03.2015",
+        }
+        text = "Brief von [PATIENT_1] an [PATIENT_2], Mutter [PATIENT_3], geb. [DOB_1]"
+        vault, remapped = _reconcile_preview_tokens(existing, preview, text, None)
+
+        self.assertEqual(vault["[PATIENT_1]"], "Anna Weber")
+        self.assertEqual(vault["[PATIENT_2]"], "Erika Beispiel")
+        self.assertEqual(vault["[PATIENT_3]"], "Max Beispiel")  # next free index off existing vault
+        self.assertEqual(remapped, "Brief von [PATIENT_1] an [PATIENT_3], Mutter [PATIENT_2], geb. [DOB_1]")
+        merged = {**existing, **vault}
+        self.assertEqual(len(merged), 4)
+
+    def test_scoped_dob_token_satisfies_dob_marker_window(self) -> None:
+        self.assertNotIn("DOB_MARKER", {hit.pattern for hit in residue_report("Geburtsdatum: [1_DOB_2]")})
+        self.assertNotIn("DOB_MARKER", {hit.pattern for hit in residue_report("Geburtsdatum: [DOB_2]")})
+        self.assertIn("DOB_MARKER", {hit.pattern for hit in residue_report("Geburtsdatum: 12.03.")})
+
+    def test_preview_tokens_get_patient_scope(self) -> None:
+        from konsilium.ingest import _patient_scope, _reconcile_preview_tokens
+
+        self.assertEqual(_patient_scope("patient-1"), "1")
+        self.assertIsNone(_patient_scope("synthetic"))
+        existing = {"[1_PATIENT_1]": "Anna Weber"}
+        preview = {"[PATIENT_1]": "Anna Weber", "[PATIENT_2]": "Max Beispiel", "[ADDR_1]": "Weg 3"}
+        text = "[PATIENT_1] und [PATIENT_2], [ADDR_1]"
+        vault, remapped = _reconcile_preview_tokens(existing, preview, text, "1")
+        self.assertEqual(remapped, "[1_PATIENT_1] und [1_PATIENT_2], [1_ADDR_1]")
+        self.assertEqual(vault["[1_PATIENT_1]"], "Anna Weber")  # dedup onto existing scoped token
+        self.assertEqual(vault["[1_PATIENT_2]"], "Max Beispiel")
+        self.assertEqual(vault["[1_ADDR_1]"], "Weg 3")
+        from konsilium.deid import _token_kind
+        self.assertEqual(_token_kind("[1_CASE_NUMBER_2]"), "CASE_NUMBER")
+        self.assertEqual(_token_kind("[12_PATIENT_3]"), "PATIENT")
+
+    def test_inbox_preview_selection_skips_already_previewed(self) -> None:
+        from konsilium.ingest import inbox_documents_to_preview
+
+        with tempfile.TemporaryDirectory() as tmp:
+            inbox = Path(tmp) / "inbox"
+            previews = Path(tmp) / "previews"
+            inbox.mkdir()
+            previews.mkdir()
+            (inbox / "2024-01-02_Report.pdf").write_bytes(b"%PDF-1.4")
+            (inbox / "notes.txt").write_text("x", encoding="utf-8")
+            (inbox / "logo.gif").write_bytes(b"GIF89a")  # unsupported suffix -> ignored
+            (previews / "preview-notes.md").write_text("done", encoding="utf-8")
+
+            todo = [p.name for p in inbox_documents_to_preview(inbox, previews)]
+            self.assertEqual(todo, ["2024-01-02_Report.pdf"])  # .txt already previewed, .gif skipped
+            self.assertEqual(inbox_documents_to_preview(Path(tmp) / "missing", previews), [])
+
+    def test_token_ledger_groups_by_kind_and_stays_in_vault_dir(self) -> None:
+        from konsilium.ingest import write_token_ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            vault_dir = Path(tmp)
+            vault = {"[PATIENT_2]": "Anna Weber", "[PATIENT_1]": "Max M", "[ADDR_1]": "Weg 3", "[PHONE_1]": "040 1"}
+            path = write_token_ledger(vault_dir, "patient-1", vault)
+            self.assertEqual(path, vault_dir / "patient-1.tokens.md")
+            body = path.read_text(encoding="utf-8")
+            self.assertLess(body.index("## PATIENT"), body.index("## ADDR"))
+            self.assertLess(body.index("[PATIENT_1]"), body.index("[PATIENT_2]"))  # numeric order
+            self.assertIn("| `[PHONE_1]` | 040 1 |", body)
+
+    def test_composite_detector_unions_entities(self) -> None:
+        from konsilium.gliner_deid import composite_detector
+
+        first = lambda text: [PiiEntity("PERSON", "Anna Weber"), PiiEntity("PHONE", "040 123456")]
+        second = lambda text: [PiiEntity("person", "Anna Weber "), PiiEntity("EMAIL", "a@b.de")]
+        entities = composite_detector(first, second)("irrelevant")
+        self.assertEqual(
+            [(entity.kind, entity.value.strip()) for entity in entities],
+            [("PERSON", "Anna Weber"), ("PHONE", "040 123456"), ("EMAIL", "a@b.de")],
         )
 
     def test_ocr_spaced_private_plz_is_tokenized_and_gated(self) -> None:
@@ -522,9 +720,9 @@ class Stage1Test(unittest.TestCase):
             )
             document_path = ingest_from_preview(config, "case-1", preview, structure_model=structure_model)
 
-            self.assertIn("[PATIENT_1]", document_path.read_text(encoding="utf-8"))
+            self.assertIn("[1_PATIENT_1]", document_path.read_text(encoding="utf-8"))
             vault = json.loads((root / "identity_vault" / "case-1.json").read_text(encoding="utf-8"))
-            self.assertEqual(vault, {"[PATIENT_1]": "Maria Beispiel"})
+            self.assertEqual(vault, {"[1_PATIENT_1]": "Maria Beispiel"})
 
     def test_institutional_ust_id_does_not_trigger_digit_residue(self) -> None:
         text = "Klinik Musterstadt\nUst-ID Nr. DE252426446"
@@ -691,7 +889,7 @@ class Stage1Test(unittest.TestCase):
                 "labs": [],
                 "document_date": "2025-09-10",
                 "document_topic": "EEG Befund",
-                "document_sender": "Wilhelmstift",
+                "document_sender": "Musterstift",
             }
 
         with TemporaryDirectory() as tmp:
@@ -704,9 +902,9 @@ class Stage1Test(unittest.TestCase):
                 allow_synthetic=True,
             )
 
-            self.assertEqual(document_path.name, "2025-09-10_EEG-Befund_Wilhelmstift.md")
-            self.assertIn("date_source: document", document_path.read_text(encoding="utf-8"))
-            hits = PatientMemory(root).search("EEG Befund Wilhelmstift", patient_id="case-1")
+            self.assertEqual(document_path.name, "2025-09-10_EEG-Befund_Musterstift.md")
+            self.assertIn('date_source: "document"', document_path.read_text(encoding="utf-8"))
+            hits = PatientMemory(root).search("EEG Befund Musterstift", patient_id="case-1")
             self.assertIn(str(document_path.relative_to(root)), {hit["path"] for hit in hits})
 
     def test_document_filename_fallbacks_are_safe_and_mark_ingest_date(self) -> None:
@@ -747,7 +945,7 @@ class Stage1Test(unittest.TestCase):
                 fallback_path.name,
                 f"{date.today().isoformat()}_Aerztlicher-Bericht_Klinikum-Muenchen.md",
             )
-            self.assertIn("date_source: ingest", fallback_path.read_text(encoding="utf-8"))
+            self.assertIn('date_source: "ingest"', fallback_path.read_text(encoding="utf-8"))
             self.assertEqual(unsafe_path.name, "2025-09-10_document_unknown-sender.md")
             self.assertNotIn("PATIENT", unsafe_path.name)
             self.assertNotIn("123456", unsafe_path.name)
@@ -1079,7 +1277,7 @@ class Stage1Test(unittest.TestCase):
         self.assertEqual(calls[0][1]["options"], {"temperature": 0})
         self.assertEqual({call[2] for call in calls}, {321})
 
-        configured = _ollama_detector(
+        configured = _build_detector(
             Config.model_validate(
                 {"deidentification": {"ollama_model": "gemma3:4b", "timeout_s": 123, "chunk_size": 777, "chunk_overlap": 111}}
             )

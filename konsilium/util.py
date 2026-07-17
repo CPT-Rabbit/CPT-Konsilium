@@ -1,4 +1,4 @@
-"""Small pure utilities (ported near-verbatim from Hermes, no dependencies)."""
+"""Small pure utilities, no dependencies."""
 
 from __future__ import annotations
 

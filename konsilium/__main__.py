@@ -24,9 +24,21 @@ def main(argv: list[str] | None = None) -> None:
     ingest_source.add_argument("--file")
     ingest_source.add_argument("--from-preview")
     ingest.add_argument("--synthetic", action="store_true", help="explicit synthetic/test ingest")
+    ingest.add_argument(
+        "--accept-residue",
+        help="comma-separated residue patterns the operator reviewed and accepted (from-preview only)",
+    )
 
     preview = subparsers.add_parser("deid-preview", help="write a local de-identification preview without ingesting")
     preview.add_argument("--file", required=True)
+    preview.add_argument(
+        "--known-identity",
+        help="patient id or identity-vault path whose confirmed PII is swept deterministically",
+    )
+
+    inbox = subparsers.add_parser("preview-inbox", help="de-identify every new inbox document into a review preview")
+    inbox.add_argument("--patient", required=True, help="patient id whose vault seeds the known-identity sweep")
+    inbox.add_argument("--dir", help="inbox directory (default: <patient_root>/inbox)")
 
     review = subparsers.add_parser("review", help="run a consilium review")
     review.add_argument("--patient", required=True)
@@ -35,6 +47,7 @@ def main(argv: list[str] | None = None) -> None:
 
     letter = subparsers.add_parser("letter", help="write a tokenized doctor-letter draft")
     letter.add_argument("--patient", required=True)
+    letter.add_argument("--channel", choices=("paper", "email"), default="paper")
 
     render = subparsers.add_parser("letter-render", help="render PII to stdout only")
     render.add_argument("--patient", required=True)
@@ -76,6 +89,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "review":
         _review(config, args)
+        return
+    if args.command == "preview-inbox":
+        _preview_inbox(config, args)
         return
     if args.command == "letter":
         _letter(config, args)
@@ -144,8 +160,11 @@ def _ingest(config: Config, args: argparse.Namespace) -> None:
             args.patient,
             args.from_preview,
             config.runtime.patient_root,
+            accepted_residue=_csv(getattr(args, "accept_residue", None)),
         )
         stats = {"kind": "reviewed_preview"}
+    elif getattr(args, "accept_residue", None):
+        raise ValueError("--accept-residue applies to reviewed previews only (--from-preview)")
     elif args.synthetic:
         extracted = extract_text_with_stats(args.file)
         document_path = ingest_text(
@@ -170,9 +189,39 @@ def _ingest(config: Config, args: argparse.Namespace) -> None:
 
 
 def _deid_preview(config: Config, args: argparse.Namespace) -> None:
-    from .ingest import deid_preview
+    from pathlib import Path
 
-    print(json.dumps(deid_preview(config, args.file), ensure_ascii=False))
+    from .ingest import _read_vault, _safe_id, deid_preview
+
+    known_identity = None
+    ref = getattr(args, "known_identity", None)
+    if ref:
+        path = Path(ref)
+        if not path.exists():
+            path = Path(config.runtime.patient_root) / "identity_vault" / f"{_safe_id(ref)}.json"
+        known_identity = _read_vault(path) or None
+    print(json.dumps(deid_preview(config, args.file, known_identity=known_identity), ensure_ascii=False))
+
+
+def _preview_inbox(config: Config, args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from .ingest import _read_vault, _safe_id, deid_preview, inbox_documents_to_preview
+
+    root = Path(config.runtime.patient_root)
+    inbox_dir = Path(args.dir) if args.dir else root / "inbox"
+    known_identity = _read_vault(root / "identity_vault" / f"{_safe_id(args.patient)}.json") or None
+    todo = inbox_documents_to_preview(inbox_dir, root / "previews")
+    results = []
+    for path in todo:
+        report = deid_preview(config, path, known_identity=known_identity)["residue"]
+        results.append({"file": path.name, "blocked": report["blocked"]})
+    print(json.dumps({
+        "inbox": str(inbox_dir),
+        "previewed": len(results),
+        "blocked": [item["file"] for item in results if item["blocked"]],
+        "clean": [item["file"] for item in results if not item["blocked"]],
+    }, ensure_ascii=False))
 
 
 def _review(config: Config, args: argparse.Namespace) -> None:
@@ -184,6 +233,7 @@ def _review(config: Config, args: argparse.Namespace) -> None:
         roles=_csv(args.roles) or None,
         question=args.question,
         model_client=_model_client(config),
+        residue_policy=config.deidentification.residue,
     )
     report_path = config.runtime.patient_root / "patients" / args.patient / "consilium" / "latest.json"
     print(f"report={report_path}")
@@ -193,7 +243,7 @@ def _review(config: Config, args: argparse.Namespace) -> None:
 def _letter(config: Config, args: argparse.Namespace) -> None:
     from .letters import doctor_letter
 
-    print(doctor_letter(config.runtime.patient_root, args.patient))
+    print(doctor_letter(config.runtime.patient_root, args.patient, channel=args.channel))
 
 
 def _letter_render(config: Config, args: argparse.Namespace) -> None:

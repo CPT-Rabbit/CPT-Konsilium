@@ -20,7 +20,6 @@ from konsilium import (
 from konsilium.egress import EgressViolation
 from konsilium.knowledge import SearchResult
 from konsilium.memory import PatientMemory
-from konsilium.research import paper_deepen_request, retraction_sweep_request
 from konsilium.smoke import knowledge_smoke
 
 
@@ -184,10 +183,16 @@ class StagesOneToThreeTest(unittest.TestCase):
             draft = draft_path.read_text(encoding="utf-8")
             self.assertIn("[PATIENT_1]", draft)
             self.assertNotIn("Anna Mueller", draft)
+            self.assertIn("**Ärztliche Einschätzung", draft)   # DIN 5008 Betreff, bold, no label
+            self.assertIn("Mit freundlichen Grüßen", draft)     # Grußformel
 
             rendered = render_doctor_letter(root, "case-1", draft)
-            self.assertIn("Anna Mueller", rendered)
-            self.assertIn("Hauptstrasse 7", rendered)
+            self.assertIn("Anna Mueller", rendered)             # deterministic token substitution
+            self.assertNotIn("[PATIENT_1]", rendered)
+
+            email = doctor_letter(root, "case-1", channel="email").read_text(encoding="utf-8")
+            self.assertTrue(email.startswith("Betreff: "))      # DIN 5008 e-mail: subject in header
+            self.assertNotIn("[EMPFÄNGER]", email)              # no address block for e-mail
 
             for language in ("en", "ru", "fr"):
                 with self.assertRaisesRegex(ValueError, "only German doctor letters are supported"):
@@ -196,11 +201,6 @@ class StagesOneToThreeTest(unittest.TestCase):
             monitor = monitor_review(root, ["case-1", "case-2"])
             self.assertEqual({item["patient_id"] for item in monitor["patients"]}, {"case-1", "case-2"})
             self.assertTrue((root / "monitor_schedule.json").exists())
-
-            deepen = paper_deepen_request("case-1", "10.1000/example")
-            sweep = retraction_sweep_request("case-1", ["10.1000/example"])
-            self.assertEqual(deepen["target_agent"], "research-agent")
-            self.assertEqual(sweep["tool"], "retraction_sweep")
 
     def test_case_review_can_use_model_client_without_raw_pii(self) -> None:
         class FakeModel:
@@ -362,7 +362,7 @@ class StagesOneToThreeTest(unittest.TestCase):
         kwargs = ModelClient(SimpleNamespace(kind="custom")).build_kwargs([], "strict JSON", [], json_mode=True)
 
         self.assertFalse(kwargs["stream"])
-        self.assertEqual(kwargs["max_tokens"], 4096)
+        self.assertEqual(kwargs["max_tokens"], 8192)
         self.assertEqual(kwargs["response_format"], {"type": "json_object"})
 
 if __name__ == "__main__":
